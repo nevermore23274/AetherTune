@@ -1,0 +1,192 @@
+pub mod app;
+pub mod audio;
+pub mod storage;
+pub mod ui;
+
+use app::{FrameTiming, InputMode, Overlay};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io;
+use std::time::{Duration, Instant};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Fetch initial stations
+    let client = radiobrowser::RadioBrowserAPI::new().await?;
+    let stations_data = client
+        .get_stations()
+        .tag("lo-fi")
+        .limit("30")
+        .send()
+        .await?;
+
+    let mut app = app::App::new(stations_data);
+
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+
+    let mut last_tick = Instant::now();
+
+    loop {
+        let frame_start = Instant::now();
+
+        // ── Draw ──────────────────────────────────────────────────
+        let draw_start = Instant::now();
+        terminal.draw(|f| ui::draw(f, &app))?;
+        let draw_us = draw_start.elapsed().as_micros() as u64;
+
+        // ── Event handling ────────────────────────────────────────
+        let tick_rate = Duration::from_millis(app.tick_rate_ms);
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_secs(0));
+
+        // Measure the idle wait separately from event handling work
+        let wait_start = Instant::now();
+        let has_event = crossterm::event::poll(timeout)?;
+        let event_wait_us = wait_start.elapsed().as_micros() as u64;
+
+        let handle_start = Instant::now();
+        if has_event {
+            if let Event::Key(key) = event::read()? {
+                match app.input_mode {
+                    InputMode::Normal => {
+                        // Handle overlays first
+                        if app.overlay != Overlay::None {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('i') => {
+                                    app.overlay = Overlay::None;
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+
+                        match key.code {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Char('?') => {
+                                app.overlay = Overlay::Help;
+                            }
+                            KeyCode::Char('i') => {
+                                app.overlay = Overlay::StationDetail;
+                            }
+                            KeyCode::Char('/') => {
+                                app.search_query.clear();
+                                app.input_mode = InputMode::Editing;
+                            }
+                            KeyCode::Char('s') => app.stop(),
+                            KeyCode::Char('f') => app.toggle_favorite(),
+                            KeyCode::Char('+') | KeyCode::Char('=') => app.set_volume(5),
+                            KeyCode::Char('-') => app.set_volume(-5),
+                            KeyCode::Down | KeyCode::Char('j') => app.next(),
+                            KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                            KeyCode::Enter => app.play(),
+                            KeyCode::Tab => {
+                                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    app.switch_category().await?;
+                                } else {
+                                    app.cycle_panel();
+                                }
+                            }
+                            KeyCode::BackTab => {
+                                app.switch_category_back().await?;
+                            }
+                            KeyCode::Char('[') => {
+                                app.switch_category_back().await?;
+                            }
+                            KeyCode::Char(']') => {
+                                app.switch_category().await?;
+                            }
+                            KeyCode::Char('n') => {
+                                app.load_more().await?;
+                            }
+                            // Perf overlay toggle
+                            KeyCode::Char('`') => {
+                                app.show_perf = !app.show_perf;
+                            }
+                            // Tick rate adjustment (only when perf overlay is shown)
+                            KeyCode::Char('<') | KeyCode::Char(',') if app.show_perf => {
+                                app.tick_rate_ms = (app.tick_rate_ms + 10).min(200);
+                            }
+                            KeyCode::Char('>') | KeyCode::Char('.') if app.show_perf => {
+                                app.tick_rate_ms = app.tick_rate_ms.saturating_sub(10).max(10);
+                            }
+                            _ => {}
+                        }
+                    }
+                    InputMode::Editing => match key.code {
+                        KeyCode::Enter => {
+                            app.input_mode = InputMode::Normal;
+                            app.perform_search().await?;
+                        }
+                        KeyCode::Esc => {
+                            app.input_mode = InputMode::Normal;
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                        }
+                        _ => {}
+                    },
+                }
+            }
+        }
+        let event_handle_us = handle_start.elapsed().as_micros() as u64;
+
+        // ── Tick: poll mpv IPC and update visualizer ──────────────
+        let mut poll_us = 0u64;
+        let mut vis_us = 0u64;
+
+        if last_tick.elapsed() >= tick_rate {
+            let poll_start = Instant::now();
+            app.player.poll();
+            app.check_song_change();
+            poll_us = poll_start.elapsed().as_micros() as u64;
+
+            let vis_start = Instant::now();
+            if app.player.has_real_audio() {
+                let used_real = app.visualizer.tick_real(&app.analysis, app.volume);
+                if !used_real {
+                    app.visualizer.tick_simulated(app.player.is_playing(), app.player.audio_level, app.volume);
+                }
+            } else {
+                let level = app.player.audio_level;
+                app.visualizer.tick_simulated(app.player.is_playing(), level, app.volume);
+            }
+            vis_us = vis_start.elapsed().as_micros() as u64;
+
+            last_tick = Instant::now();
+        }
+
+        // ── Record frame timing ───────────────────────────────────
+        let total_us = frame_start.elapsed().as_micros() as u64;
+        app.perf.record(FrameTiming {
+            draw_us,
+            event_wait_us,
+            event_handle_us,
+            poll_us,
+            vis_us,
+            total_us,
+        });
+    }
+
+    // Cleanup
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    Ok(())
+}
