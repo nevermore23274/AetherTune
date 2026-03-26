@@ -35,7 +35,7 @@ sudo pacman -S mpv pipewire-pulse
 ### Features
 
 - **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name
-- **Real-time audio visualization** — 24-band spectrum analyzer using DFT on captured PCM audio via PulseAudio/PipeWire monitor
+- **Real-time audio visualization** — 16-band spectrum analyzer using DFT on captured PCM audio via PulseAudio/PipeWire monitor, with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
@@ -114,9 +114,9 @@ When `parec` is available, AetherTune captures audio through the PulseAudio/Pipe
 
 1. **mpv** plays audio normally through the default audio output
 2. **parec** captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO
-3. A background thread reads the FIFO and runs a **partial DFT with Hann windowing** across 24 logarithmically-spaced frequency bands (50Hz–18kHz)
+3. A background thread reads the FIFO and runs a **partial DFT with Hann windowing** across 16 logarithmically-spaced frequency bands (50Hz–10kHz)
 4. Band energies and RMS are pushed to a shared `Arc<Mutex<AudioAnalysis>>`
-5. The visualizer reads the analysis data each tick and applies exponential smoothing
+5. The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment
 
 Process isolation is handled carefully: `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes.
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// Number of frequency bands we compute for the visualizer
-pub const NUM_BANDS: usize = 24;
+pub const NUM_BANDS: usize = 16;
 
 /// Shared state between the reader thread and the main thread
 pub struct AudioAnalysis {
@@ -136,13 +136,13 @@ fn reader_loop(fifo: &std::path::Path, analysis: &SharedAnalysis) {
 
 /// Compute energy in NUM_BANDS logarithmically-spaced frequency bands
 /// using a partial DFT (only compute bins we need).
-fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
+pub fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
     let mut energies = [0.0f64; NUM_BANDS];
 
     // Define logarithmically spaced band edges in Hz
-    // From ~50Hz to ~20kHz
+    // From ~50Hz to ~10kHz (CAVA recommended range for music visualization)
     let min_freq: f64 = 50.0;
-    let max_freq: f64 = 18000.0;
+    let max_freq: f64 = 10000.0;
     let sample_rate: f64 = 48000.0;
     let freq_resolution = sample_rate / n as f64; // ~46.875 Hz
 
@@ -209,13 +209,14 @@ fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
     }
 
     // Normalize: find max energy and scale so the loudest band is ~1.0
-    // Also apply some perceptual weighting (boost highs slightly since
-    // they tend to have less energy)
+    // Apply perceptual weighting — boost higher bands more aggressively
+    // since energy naturally drops off with frequency in most music.
+    // With 16 bands spanning 50Hz-10kHz, the upper bands need more help.
     let max_e = energies.iter().cloned().fold(0.0f64, f64::max);
     if max_e > 0.0001 {
         for i in 0..NUM_BANDS {
-            // Perceptual boost for higher bands (roughly +3dB per octave)
-            let boost = 1.0 + (i as f64 / NUM_BANDS as f64) * 0.5;
+            // Progressive boost: ~1.0x at band 0 (50Hz), ~2.0x at band 15 (10kHz)
+            let boost = 1.0 + (i as f64 / NUM_BANDS as f64) * 1.0;
             energies[i] = (energies[i] / max_e * boost).min(1.0);
         }
     }
@@ -225,7 +226,7 @@ fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
 
 /// Compute a single DFT bin
 #[inline]
-fn dft_bin(samples: &[f64], k: usize, _n: usize, two_pi_over_n: f64) -> (f64, f64) {
+pub fn dft_bin(samples: &[f64], k: usize, _n: usize, two_pi_over_n: f64) -> (f64, f64) {
     let mut re = 0.0;
     let mut im = 0.0;
     let w = two_pi_over_n * k as f64;
@@ -242,4 +243,101 @@ fn dft_bin(samples: &[f64], k: usize, _n: usize, two_pi_over_n: f64) -> (f64, f6
 /// Clean up the FIFO file
 pub fn cleanup_fifo(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::PI;
+
+    /// Generate a sine wave at a given frequency
+    fn sine_wave(freq: f64, sample_rate: f64, num_samples: usize) -> Vec<f64> {
+        (0..num_samples)
+            .map(|i| {
+                let t = i as f64 / sample_rate;
+                (2.0 * PI * freq * t).sin()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_dft_silence() {
+        let samples = vec![0.0f64; 1024];
+        let energies = compute_band_energies(&samples, 1024);
+        assert!(
+            energies.iter().all(|&e| e < 0.001),
+            "Silent input should produce near-zero energy in all bands"
+        );
+    }
+
+    #[test]
+    fn test_dft_single_tone_440hz() {
+        let samples = sine_wave(440.0, 48000.0, 1024);
+        let energies = compute_band_energies(&samples, 1024);
+
+        // 440Hz falls in a low-mid band. Find which band has the peak.
+        let max_band = energies
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        // 440Hz should land roughly in bands 4-7 (logarithmic spacing from 50-10000Hz, 16 bands)
+        assert!(
+            max_band >= 3 && max_band <= 9,
+            "440Hz peak in band {} — expected roughly bands 3-9",
+            max_band
+        );
+    }
+
+    #[test]
+    fn test_dft_high_tone_vs_low_tone() {
+        let low = sine_wave(100.0, 48000.0, 1024);
+        let high = sine_wave(8000.0, 48000.0, 1024);
+
+        let low_energies = compute_band_energies(&low, 1024);
+        let high_energies = compute_band_energies(&high, 1024);
+
+        let low_peak = low_energies
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        let high_peak = high_energies
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        assert!(
+            high_peak > low_peak,
+            "8kHz peak (band {}) should be in a higher band than 100Hz peak (band {})",
+            high_peak, low_peak
+        );
+    }
+
+    #[test]
+    fn test_dft_bin_dc() {
+        // Bin 0 (DC) of a constant signal should have high magnitude
+        let samples = vec![1.0; 1024];
+        let two_pi_over_n = 2.0 * PI / 1024.0;
+        let (re, im) = dft_bin(&samples, 0, 1024, two_pi_over_n);
+        let mag = (re * re + im * im).sqrt();
+        assert!(
+            mag > 100.0,
+            "DC bin of constant signal should have high magnitude, got {}",
+            mag
+        );
+    }
+
+    #[test]
+    fn test_band_count() {
+        let samples = sine_wave(1000.0, 48000.0, 1024);
+        let energies = compute_band_energies(&samples, 1024);
+        assert_eq!(energies.len(), NUM_BANDS);
+    }
 }

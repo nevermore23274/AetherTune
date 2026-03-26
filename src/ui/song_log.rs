@@ -46,6 +46,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let max_items = inner.height as usize;
+    let avail = inner.width as usize;
+
     let lines: Vec<Line> = app
         .song_log
         .iter()
@@ -61,18 +63,30 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             };
             let station_style = Style::default().fg(Color::Rgb(80, 80, 110));
 
-            let max_title_len = (inner.width as usize).saturating_sub(18);
-            let display_title = truncate_str(&entry.title, max_title_len);
+            let indicator = if is_current { "▸ " } else { "  " };
+
+            // Fixed-width prefix: "HH:MM " (6) + indicator (2) = 8 chars
+            let prefix_len = entry.timestamp.len() + 1 + indicator.len();
+            // Remaining space after prefix, split between title and station
+            let remaining = avail.saturating_sub(prefix_len);
+
+            // Station gets up to 30% of remaining space (min 10, max 20 chars)
+            // plus 2 chars for the "  " separator
+            let station_budget = (remaining * 30 / 100).clamp(10, 20);
+            let title_budget = remaining.saturating_sub(station_budget + 2);
+
+            let display_title = truncate_str(&entry.title, title_budget);
+            let display_station = truncate_str(&entry.station, station_budget);
 
             Line::from(vec![
                 Span::styled(format!("{} ", entry.timestamp), time_style),
                 Span::styled(
-                    if is_current { "▸ " } else { "  " },
+                    indicator,
                     Style::default().fg(if is_current { NEON_GREEN } else { Color::Rgb(40, 40, 60) }),
                 ),
                 Span::styled(display_title, title_style),
                 Span::styled(
-                    format!("  {}", truncate_str(&entry.station, 15)),
+                    format!("  {}", display_station),
                     station_style,
                 ),
             ])

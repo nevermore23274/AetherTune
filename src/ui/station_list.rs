@@ -9,6 +9,10 @@ use ratatui::{
 };
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+    // Calculate dynamic name width: area minus borders (2), highlight symbol (2),
+    // prefix markers (4), separator + bitrate/meta (~12)
+    let name_budget = (area.width as usize).saturating_sub(20);
+
     let (title, items, selected) = match app.active_panel {
         ActivePanel::Stations => {
             let items: Vec<ListItem> = app
@@ -27,7 +31,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(fav_marker, Style::default().fg(YELLOW)),
                         Span::styled(prefix, Style::default().fg(NEON_GREEN)),
                         Span::styled(
-                            truncate_str(&s.name, 30),
+                            truncate_str(&s.name, name_budget),
                             Style::default().fg(DIM_WHITE),
                         ),
                         Span::styled(
@@ -65,11 +69,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled("★ ", Style::default().fg(YELLOW)),
                         Span::styled(prefix, Style::default().fg(NEON_GREEN)),
                         Span::styled(
-                            truncate_str(&fav.name, 30),
+                            truncate_str(&fav.name, name_budget),
                             Style::default().fg(DIM_WHITE),
                         ),
                         Span::styled(
-                            format!(" │ {}", fav.genre),
+                            format!(" │ {}", truncate_str(&fav.genre, 15)),
                             Style::default().fg(Color::Rgb(100, 100, 140)),
                         ),
                     ]);
@@ -92,7 +96,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                     let line = Line::from(vec![
                         Span::styled("  ", Style::default()),
                         Span::styled(
-                            truncate_str(&h.name, 28),
+                            truncate_str(&h.name, name_budget),
                             Style::default().fg(DIM_WHITE),
                         ),
                         Span::styled(
