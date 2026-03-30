@@ -15,6 +15,57 @@ use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let skip_menu = args.iter().any(|a| a == "--skip-menu" || a == "-s");
+
+    // Parse boot speed: --boot-speed=fast|normal|slow|off (default: normal)
+    let boot_speed = args
+        .iter()
+        .find(|a| a.starts_with("--boot-speed"))
+        .and_then(|a| a.strip_prefix("--boot-speed="))
+        .unwrap_or("normal");
+
+    let speed = match boot_speed {
+        "fast" => ui::launcher::BootSpeed::Fast,
+        "slow" => ui::launcher::BootSpeed::Slow,
+        "off" => ui::launcher::BootSpeed::Off,
+        _ => ui::launcher::BootSpeed::Normal,
+    };
+
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+
+    // Show launch menu unless --skip-menu was passed
+    if !skip_menu {
+        match ui::launcher::show(&mut terminal, speed) {
+            Ok(true) => {} // User chose "Start Radio"
+            Ok(false) => {
+                // User chose "Quit"
+                disable_raw_mode()?;
+                execute!(
+                    terminal.backend_mut(),
+                    LeaveAlternateScreen,
+                    DisableMouseCapture
+                )?;
+                terminal.show_cursor()?;
+                return Ok(());
+            }
+            Err(e) => {
+                disable_raw_mode()?;
+                execute!(
+                    terminal.backend_mut(),
+                    LeaveAlternateScreen,
+                    DisableMouseCapture
+                )?;
+                terminal.show_cursor()?;
+                return Err(e.into());
+            }
+        }
+    }
+
     // Fetch initial stations
     let client = radiobrowser::RadioBrowserAPI::new().await?;
     let stations_data = client
@@ -25,12 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let mut app = app::App::new(stations_data);
-
-    // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let mut last_tick = Instant::now();
 

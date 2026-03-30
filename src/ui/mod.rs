@@ -1,5 +1,6 @@
 pub mod header;
 pub mod helpers;
+pub mod launcher;
 pub mod media_browser;
 pub mod now_playing;
 pub mod overlays;
