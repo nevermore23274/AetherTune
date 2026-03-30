@@ -80,38 +80,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Set up SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
+      - uses: actions/checkout@v4
 
-          # Retry ssh-keyscan up to 5 times (AUR sometimes drops initial connections)
-          for i in 1 2 3 4 5; do
-            ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null && break
-            echo "ssh-keyscan attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
-
-          cat >> ~/.ssh/config <<EOF
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
-            User aur
-          EOF
-
-      - name: Clone AUR repo
-        run: git clone ssh://aur@aur.archlinux.org/aethertune-bin.git
-
-      - name: Update PKGBUILD
-        working-directory: aethertune-bin
+      - name: Generate PKGBUILD
         run: |
           VERSION="${{ needs.build.outputs.version }}"
           SHA256="${{ needs.build.outputs.sha256 }}"
 
-          cat > PKGBUILD <<'PKGEOF'
+          cat > PKGBUILD <<PKGEOF
           # Maintainer: sineyed
           pkgname=aethertune-bin
-          pkgver=VERSION_PLACEHOLDER
+          pkgver=${VERSION}
           pkgrel=1
           pkgdesc="A terminal-based internet radio player with real-time audio visualization, built in Rust"
           arch=('x86_64')
@@ -122,56 +101,26 @@ jobs:
                       'pulseaudio: PulseAudio-based audio capture for visualizer')
           provides=('aethertune')
           conflicts=('aethertune' 'aethertune-git')
-          source=("${pkgname}-${pkgver}.tar.gz::https://github.com/nevermore23274/AetherTune/releases/download/v${pkgver}/AetherTune-v${pkgver}-linux-x86_64.tar.gz")
-          sha256sums=('SHA256_PLACEHOLDER')
+          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/nevermore23274/AetherTune/releases/download/v\${pkgver}/AetherTune-v\${pkgver}-linux-x86_64.tar.gz")
+          sha256sums=('${SHA256}')
 
           package() {
-              cd "AetherTune-v${pkgver}-linux-x86_64"
-              install -Dm755 AetherTune "${pkgdir}/usr/bin/aethertune"
-              install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-              install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+              cd "AetherTune-v\${pkgver}-linux-x86_64"
+              install -Dm755 AetherTune "\${pkgdir}/usr/bin/aethertune"
+              install -Dm644 LICENSE "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+              install -Dm644 README.md "\${pkgdir}/usr/share/doc/\${pkgname}/README.md"
           }
           PKGEOF
 
           sed -i 's/^          //' PKGBUILD
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" PKGBUILD
-          sed -i "s/SHA256_PLACEHOLDER/${SHA256}/" PKGBUILD
 
-      - name: Generate .SRCINFO
-        working-directory: aethertune-bin
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          SHA256="${{ needs.build.outputs.sha256 }}"
-
-          cat > .SRCINFO <<EOF
-          pkgbase = aethertune-bin
-          	pkgdesc = A terminal-based internet radio player with real-time audio visualization, built in Rust
-          	pkgver = ${VERSION}
-          	pkgrel = 1
-          	url = https://github.com/nevermore23274/AetherTune
-          	arch = x86_64
-          	license = MIT
-          	depends = mpv
-          	depends = libpulse
-          	optdepends = pipewire-pulse: PipeWire-based audio capture for visualizer
-          	optdepends = pulseaudio: PulseAudio-based audio capture for visualizer
-          	provides = aethertune
-          	conflicts = aethertune
-          	conflicts = aethertune-git
-          	source = aethertune-bin-${VERSION}.tar.gz::https://github.com/nevermore23274/AetherTune/releases/download/v${VERSION}/AetherTune-v${VERSION}-linux-x86_64.tar.gz
-          	sha256sums = ${SHA256}
-
-          pkgname = aethertune-bin
-          EOF
-
-          sed -i 's/^          //' .SRCINFO
-
-      - name: Push to AUR
-        working-directory: aethertune-bin
-        run: |
-          git config user.name "sineyed"
-          git config user.email "sineyed@users.noreply.github.com"
-          git add PKGBUILD .SRCINFO
-          git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "Update to v${{ needs.build.outputs.version }}"
-          git push
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: aethertune-bin
+          pkgbuild: ./PKGBUILD
+          commit_username: sineyed
+          commit_email: sineyed@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ needs.build.outputs.version }}"
+          ssh_keyscan_types: ed25519
