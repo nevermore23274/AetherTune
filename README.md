@@ -47,23 +47,46 @@ sudo pacman -S mpv pipewire-pulse
 - Without `parec`, the app falls back to a simulated visualizer — everything else works normally.
 
 ## Installation
-
+ 
+### From source
+ 
 ```bash
-# Clone the repository
 git clone https://github.com/nevermore23274/aethertune.git
 cd aethertune
-
-# Build in release mode
 cargo build --release
-
-# Run
 ./target/release/AetherTune
+```
+ 
+### Prebuilt binary
+ 
+Download the latest release from the [Releases page](https://github.com/nevermore23274/AetherTune/releases):
+ 
+```bash
+# Download and extract (replace VERSION with the actual tag, e.g. v0.1.0)
+curl -LO https://github.com/nevermore23274/AetherTune/releases/download/VERSION/AetherTune-VERSION-linux-x86_64.tar.gz
+tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
+./AetherTune-VERSION-linux-x86_64/AetherTune
+```
+ 
+> **Note:** You still need `mpv` and `parec` installed on your system regardless of install method.
+ 
+## Usage
+ 
+```bash
+# Run normally (with CRT boot animation)
+./target/release/AetherTune
+ 
+# Skip the launch menu
+./target/release/AetherTune --skip-menu
+ 
+# Adjust boot animation speed (fast, normal, slow, off)
+./target/release/AetherTune --boot-speed=fast
 ```
 
 ## Keybindings
-
-Below is a list of keyboard shortcuts, however you can simply press the `h` key in order to see them as well. (`esc` closes the help menu) 
-
+ 
+Below is a list of keyboard shortcuts. Press `?` in the app to see them as well (`Esc` closes the overlay).
+ 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` or `j` / `k` | Navigate station list |
@@ -76,13 +99,14 @@ Below is a list of keyboard shortcuts, however you can simply press the `h` key 
 | `n` | Load more stations |
 | `Tab` | Cycle panel (Stations / Favorites / History) |
 | `[` / `]` | Cycle genre category |
+| `Shift+Tab` | Cycle genre category (backward) |
 | `?` | Help overlay |
 | `` ` `` | Performance profiler |
 | `<` / `>` | Adjust tick rate (when profiler is open) |
 | `q` | Quit |
 
 ## Architecture
-
+ 
 ```
 src/
 ├── main.rs                  Entry point, event loop, frame timing
@@ -97,6 +121,7 @@ src/
 └── ui/
     ├── mod.rs               Layout orchestration
     ├── helpers.rs            Color palette, shared widgets
+    ├── launcher.rs           CRT boot animation + start menu
     ├── header.rs             Top bar (LIVE indicator, genre, hints)
     ├── station_list.rs       Left panel (stations/favorites/history)
     ├── now_playing.rs        Station info + session timer
@@ -109,19 +134,19 @@ src/
 ```
 
 ### Audio visualization pipeline
-
+ 
 When `parec` is available, AetherTune captures audio through the PulseAudio/PipeWire monitor source:
-
+ 
 1. **mpv** plays audio normally through the default audio output
 2. **parec** captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO
 3. A background thread reads the FIFO and runs a **partial DFT with Hann windowing** across 16 logarithmically-spaced frequency bands (50Hz–10kHz)
 4. Band energies and RMS are pushed to a shared `Arc<Mutex<AudioAnalysis>>`
 5. The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment
-
+ 
 Process isolation is handled carefully: `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes.
-
+ 
 ### Data persistence
-
+ 
 Favorites and history are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal.
 
 ## License
