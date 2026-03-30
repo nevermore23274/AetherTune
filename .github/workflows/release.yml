@@ -85,7 +85,14 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+          # Retry ssh-keyscan up to 5 times (AUR sometimes drops initial connections)
+          for i in 1 2 3 4 5; do
+            ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null && break
+            echo "ssh-keyscan attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+
           cat >> ~/.ssh/config <<EOF
           Host aur.archlinux.org
             IdentityFile ~/.ssh/aur
