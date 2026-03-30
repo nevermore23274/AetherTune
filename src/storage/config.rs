@@ -1,0 +1,88 @@
+use std::fs;
+use std::path::PathBuf;
+
+const DEFAULT_TICK_RATE_MS: u64 = 30;
+const DEFAULT_VOLUME: u32 = 50;
+
+pub struct Config {
+    pub tick_rate_ms: u64,
+    pub volume: u32,
+    path: PathBuf,
+}
+
+impl Config {
+    fn storage_path() -> PathBuf {
+        let base = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        let mut path = PathBuf::from(base);
+        path.push(".aethertune");
+        fs::create_dir_all(&path).ok();
+        path.push("config.json");
+        path
+    }
+
+    pub fn load() -> Self {
+        let path = Self::storage_path();
+        if path.exists() {
+            if let Ok(contents) = fs::read_to_string(&path) {
+                let tick_rate_ms = Self::extract_u64(&contents, "tick_rate_ms")
+                    .unwrap_or(DEFAULT_TICK_RATE_MS)
+                    .clamp(10, 200);
+                let volume = Self::extract_u64(&contents, "volume")
+                    .unwrap_or(DEFAULT_VOLUME as u64)
+                    .clamp(0, 100) as u32;
+                return Self { tick_rate_ms, volume, path };
+            }
+        }
+        Self {
+            tick_rate_ms: DEFAULT_TICK_RATE_MS,
+            volume: DEFAULT_VOLUME,
+            path,
+        }
+    }
+
+    pub fn save(&self) {
+        let json = format!(
+            "{{\n  \"tick_rate_ms\": {},\n  \"volume\": {}\n}}",
+            self.tick_rate_ms, self.volume
+        );
+        let _ = fs::write(&self.path, json);
+    }
+
+    /// Extract a numeric value for a given key from simple JSON
+    fn extract_u64(json: &str, key: &str) -> Option<u64> {
+        let pattern = format!("\"{}\":", key);
+        let idx = json.find(&pattern)?;
+        let after = json[idx + pattern.len()..].trim_start();
+        let num_str: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        num_str.parse().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_u64_basic() {
+        let json = r#"{ "tick_rate_ms": 30, "volume": 75 }"#;
+        assert_eq!(Config::extract_u64(json, "tick_rate_ms"), Some(30));
+        assert_eq!(Config::extract_u64(json, "volume"), Some(75));
+    }
+
+    #[test]
+    fn test_extract_u64_missing_key() {
+        let json = r#"{ "tick_rate_ms": 30 }"#;
+        assert_eq!(Config::extract_u64(json, "volume"), None);
+    }
+
+    #[test]
+    fn test_extract_u64_with_whitespace() {
+        let json = r#"{ "tick_rate_ms" :   50 }"#;
+        assert_eq!(Config::extract_u64(json, "tick_rate_ms"), Some(50));
+    }
+}

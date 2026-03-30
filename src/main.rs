@@ -159,9 +159,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // Tick rate adjustment (only when perf overlay is shown)
                             KeyCode::Char('<') | KeyCode::Char(',') if app.show_perf => {
                                 app.tick_rate_ms = (app.tick_rate_ms + 10).min(200);
+                                app.save_config();
                             }
                             KeyCode::Char('>') | KeyCode::Char('.') if app.show_perf => {
                                 app.tick_rate_ms = app.tick_rate_ms.saturating_sub(10).max(10);
+                                app.save_config();
                             }
                             _ => {}
                         }
@@ -190,8 +192,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ── Tick: poll mpv IPC and update visualizer ──────────────
         let mut poll_us = 0u64;
         let mut vis_us = 0u64;
+        let mut had_tick = false;
 
         if last_tick.elapsed() >= tick_rate {
+            had_tick = true;
             let poll_start = Instant::now();
             app.player.poll();
             app.check_song_change();
@@ -214,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // ── Record frame timing ───────────────────────────────────
         let total_us = frame_start.elapsed().as_micros() as u64;
+        let tick_budget_us = app.tick_rate_ms * 1000;
         app.perf.record(FrameTiming {
             draw_us,
             event_wait_us,
@@ -221,7 +226,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             poll_us,
             vis_us,
             total_us,
-        });
+            had_tick,
+        }, tick_budget_us);
     }
 
     // Cleanup

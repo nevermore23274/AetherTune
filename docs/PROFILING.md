@@ -1,212 +1,142 @@
-# Profiling & Testing
+# Profiling & Performance Tuning
 
-Documentation for AetherTune's built-in profiler and plans for test coverage.
+AetherTune includes a built-in profiler that measures per-frame timing without external tools. This guide explains how to read the profiler, understand the numbers, and optimize performance for your system.
 
-## Built-in Profiler
+## Opening the Profiler
 
-AetherTune includes a lightweight self-profiler that measures per-frame timing without external tools. It runs inside the TUI itself and imposes negligible overhead.
-
-### Usage
-
-Press `` ` `` (backtick) to toggle the profiler overlay. While the overlay is open:
+Press `` ` `` (backtick) to toggle the profiler overlay. While it's open:
 
 - `>` or `.` — decrease tick rate by 10ms (faster updates, more CPU)
 - `<` or `,` — increase tick rate by 10ms (slower updates, less CPU)
 
-### What it measures
+## Reading the Profiler
 
-Each frame of the main loop is broken into four timed phases:
+### Load and Status
 
-| Phase | What it measures |
-|-------|-----------------|
-| **Draw** | `terminal.draw()` — rendering all UI panels to the terminal buffer and flushing |
-| **Key handle** | Processing a key event after `event::poll()` returns (excludes idle wait time) |
-| **IPC poll** | `player.poll()` — reading mpv IPC socket for media title, stream info properties |
+The top of the profiler shows:
+
+```
+Tick 30ms  │  ~33 FPS  │  < > adjust
+Load 23%  (7050 / 30000µs)  OK
+```
+
+**Tick** is your current tick rate — how often the app updates. Lower means smoother but more CPU.
+
+**Load** is the percentage of your tick budget consumed by actual CPU work. The budget is simply your tick rate in microseconds (30ms = 30,000µs). If your CPU work takes 7,050µs, that's 23% of the budget.
+
+**Status labels** tell you at a glance if your system is keeping up:
+
+| Status | Load | Meaning |
+|--------|------|---------|
+| **IDLE** | <30% | Plenty of headroom, system is barely working |
+| **OK** | 30–60% | Healthy range with room for spikes |
+| **TIGHT** | 60–80% | Getting close to the limit, spikes may cause stutter |
+| **OVER BUDGET** | >80% | The app is struggling to keep up — increase tick rate |
+
+### Sparkline
+
+The bar below the load shows CPU load over the last ~40 frames. This lets you see spikes and trends at a glance rather than watching numbers change. The color matches the current status.
+
+### Per-frame Work (all frames)
+
+These timings are averaged across every frame:
+
+| Metric | What it measures |
+|--------|-----------------|
+| **Draw** | `terminal.draw()` — rendering all UI panels and flushing to the terminal |
+| **Key input** | Processing a key event after `event::poll()` returns |
+
+Draw is almost always the dominant cost. It's the time ratatui spends computing the layout, building styled spans, diffing against the previous frame, and writing escape sequences to stdout.
+
+### Tick Work (tick frames only)
+
+These are averaged only over frames where the tick actually ran. On most frames, the tick doesn't fire (the app is just drawing and waiting for events), so averaging these across all frames would make them look artificially close to zero.
+
+| Metric | What it measures |
+|--------|-----------------|
+| **IPC poll** | `player.poll()` — reading the mpv IPC socket for media title and stream info |
 | **Visualizer** | `visualizer.tick_real()` or `tick_simulated()` — reading audio analysis and updating bar heights |
 
-The profiler also shows:
+These should be well under 100µs each. If IPC poll is consistently high, it may indicate the mpv socket is backed up with responses.
 
-- **Event wait** (idle) — time spent sleeping in `crossterm::event::poll()`, waiting for input or timeout. This is *not* CPU work.
-- **CPU load** — `work_total / tick_budget × 100%`. Only counts actual CPU work, not idle wait.
-- **Frame** (wall total) — full wall-clock time per loop iteration.
+### Totals
 
-### Implementation details
+| Metric | What it measures |
+|--------|-----------------|
+| **CPU work** | Sum of draw + key input + IPC poll + visualizer |
+| **Idle wait** | Time spent sleeping in `event::poll()`, waiting for input or timeout. This is not CPU work. |
+| **Frame** | Full wall-clock time per loop iteration (work + idle) |
 
-Timing uses `std::time::Instant` with microsecond precision. Samples are stored in a ring buffer of 120 entries (~4 seconds at 30ms tick rate). The overlay shows rolling averages and per-field maximums.
+### The avg and max Columns
 
-The key insight that led to this design: the original profiler showed 100% budget usage because `event::poll()` sleeps for the remaining tick budget. Splitting the event phase into "wait" (idle sleep) and "handle" (actual key processing) revealed that real CPU work is only ~7ms per frame — dominated entirely by terminal rendering.
+**avg** is the mean over the rolling window. **max** is the highest value seen in that same window. Both use a 2-second rolling window (~60 frames), so old spikes fall off naturally — you're always seeing recent performance, not a startup spike from minutes ago.
 
-### Reference benchmarks
+Max values are color-coded: green under 5,000µs, yellow under 10,000µs, red above.
 
-Measured on a Ryzen 9 5900X running Hyprland/PipeWire, streaming 192kbps MP3 with real audio visualization active:
+## Optimizing for Your System
 
-| Tick rate | FPS | Avg work | CPU load | System CPU | Memory |
-|-----------|-----|----------|----------|------------|--------|
-| 100ms | 10 | ~6,860µs | 6% | <1% | 24MB |
-| 80ms | 12 | ~6,660µs | 8% | ~1% | 24MB |
-| 30ms | 33 | ~7,050µs | 23% | ~1.6% | 24MB |
-| 20ms | 50 | ~7,150µs | 35% | ~2% | 24MB |
+### Step 1: Check the status label
+
+If it says **IDLE** or **OK**, you're fine. No changes needed.
+
+### Step 2: If it says TIGHT or OVER BUDGET
+
+Open the profiler and press `<` a few times to increase the tick rate. Going from 30ms to 50ms cuts CPU usage significantly while still giving a smooth visualizer. The tradeoff is slightly less responsive bar animation.
+
+| Tick rate | FPS | Visualizer feel |
+|-----------|-----|-----------------|
+| 10ms | 100 | Silky smooth, high CPU |
+| 20ms | 50 | Very responsive |
+| 30ms | 33 | Default — good balance |
+| 50ms | 20 | Still smooth, much lighter |
+| 80ms | 12 | Noticeable stepping, very light |
+
+### Step 3: If Draw is the bottleneck
+
+Draw cost is almost always the dominant factor. It scales with terminal size (more cells = more work) and the number of UI elements visible. Things that increase draw cost:
+
+- Large terminal windows (4K monitors at small font sizes)
+- Many stations loaded in the list
+- Long song log history
+- Running over SSH (network latency added to each flush)
+
+If draw is consistently over 10,000µs, consider increasing the tick rate or reducing your terminal size.
+
+### Step 4: Profiling over SSH
+
+Over SSH, draw cost increases dramatically because each `terminal.draw()` flushes escape sequences over the network. If you're seeing 20,000µs+ draw times over SSH, increase the tick rate to 80ms or higher.
+
+## Implementation Details
+
+Timing uses `std::time::Instant` with microsecond precision. Samples are stored in a ring buffer of 120 entries. The profiler overlay itself adds minimal overhead (one extra ratatui paragraph render per frame).
+
+Each frame records a `had_tick` flag indicating whether the IPC poll and visualizer actually ran that iteration. The `summary()` method uses this to compute tick-only averages separately from per-frame averages, giving accurate numbers for both.
+
+The sparkline records one CPU load sample per frame into a separate 40-entry ring buffer, displayed oldest-to-newest.
+
+## Reference Benchmarks
+
+Measured on a Ryzen 9 5900X running Hyprland/PipeWire, kitty terminal, streaming 192kbps MP3 with real audio visualization active:
+
+| Tick rate | FPS | Avg draw | Avg work | CPU load | Status |
+|-----------|-----|----------|----------|----------|--------|
+| 10ms | 100 | ~5,500µs | ~5,550µs | 55% | OK |
+| 20ms | 50 | ~5,500µs | ~5,550µs | 27% | IDLE |
+| 30ms | 33 | ~5,500µs | ~5,550µs | 18% | IDLE |
+| 50ms | 20 | ~5,500µs | ~5,550µs | 11% | IDLE |
 
 Key observations:
 
-- **Draw cost is constant** (~7ms) regardless of tick rate. It dominates the work budget.
-- **IPC poll and visualizer** are negligible (25–40µs combined).
-- **Work total scales linearly** with FPS since each frame does the same amount of work.
-- **System CPU stays very low** even at 50 FPS due to the efficient event-driven architecture.
-- **30ms (33 FPS)** was chosen as the default — best balance of visualizer responsiveness vs resource usage.
-
-### Optimizing draw cost
-
-If draw cost becomes a concern (e.g., on slower hardware or over SSH), potential optimizations:
-
-- Reduce visualizer bar count (currently 24 bars × direct buffer writes)
-- Use `ratatui`'s diff-based rendering (already enabled by default)
-- Skip drawing unchanged panels when no state has changed
-- Reduce the number of `Span` allocations in station list rendering
+- **Draw cost is constant** (~5.5ms) regardless of tick rate. It dominates the work budget.
+- **IPC poll and visualizer** are negligible (20–80µs combined on tick frames).
+- **Load scales inversely with tick rate** since the same work runs against a larger budget.
+- **30ms (33 FPS)** is the default — good balance of visualizer smoothness vs resource usage.
 
 ## Testing
 
-### Current state
+### Current Coverage
 
-AetherTune currently has **no automated tests**. All validation has been done through manual testing and the built-in profiler. This section documents the testing plan.
-
-### Unit test candidates
-
-#### `audio::pipe` — DFT and frequency analysis
-
-The DFT computation and band energy calculation are pure functions that are ideal for unit testing:
-
-```rust
-// Test that a known sine wave produces energy in the expected band
-#[test]
-fn test_dft_single_tone() {
-    let sample_rate = 48000;
-    let freq = 440.0; // A4
-    let samples: Vec<i16> = (0..1024)
-        .map(|i| {
-            let t = i as f64 / sample_rate as f64;
-            (f64::sin(2.0 * std::f64::consts::PI * freq * t) * 16000.0) as i16
-        })
-        .collect();
-    
-    let energies = compute_band_energies(&samples);
-    // Band covering 440Hz should have the highest energy
-    // Bands far from 440Hz should be near zero
-}
-
-#[test]
-fn test_dft_silence() {
-    let samples = vec![0i16; 1024];
-    let energies = compute_band_energies(&samples);
-    assert!(energies.iter().all(|&e| e < 0.001));
-}
-
-#[test]
-fn test_band_frequencies_are_logarithmic() {
-    // Verify the 24 bands span 50Hz–18kHz with log spacing
-}
-```
-
-To make these testable, `compute_band_energies` would need to be extracted as a public function (currently it operates on the shared buffer internally).
-
-#### `audio::visualizer` — smoothing and peak decay
-
-```rust
-#[test]
-fn test_peak_decay() {
-    let mut vis = Visualizer::new();
-    // Set bars high, then tick with zero input
-    // Peaks should decay gradually, not jump to zero
-}
-
-#[test]
-fn test_volume_scaling() {
-    // At volume 0, bars should be zero
-    // At volume 100, bars should reflect full input
-}
-```
-
-#### `app` — song change detection and stream noise filtering
-
-```rust
-#[test]
-fn test_is_stream_noise_urls() {
-    assert!(App::is_stream_noise("http://67.249.184.45:8015/", &None));
-    assert!(App::is_stream_noise("https://stream.example.com/live", &None));
-}
-
-#[test]
-fn test_is_stream_noise_slugs() {
-    assert!(App::is_stream_noise("highvoltage_mobile_mp3", &None));
-    assert!(App::is_stream_noise("stream.mp3", &None));
-}
-
-#[test]
-fn test_is_not_stream_noise() {
-    assert!(!App::is_stream_noise("DOWN - Stone the Crow", &None));
-    assert!(!App::is_stream_noise("Soundgarden - Fell on Black Days", &None));
-    assert!(!App::is_stream_noise("Disturbed - Stupify", &None));
-}
-```
-
-The `is_stream_noise` method is already a static function — it just needs to be made `pub` for testing.
-
-#### `storage::favorites` and `storage::history` — JSON serialization
-
-```rust
-#[test]
-fn test_favorites_roundtrip() {
-    // Create a FavoritesStore, add entries, serialize, deserialize, compare
-}
-
-#[test]
-fn test_history_deduplication() {
-    // Adding the same station URL twice should update, not duplicate
-}
-
-#[test]
-fn test_history_max_entries() {
-    // Adding more than 50 entries should truncate oldest
-}
-```
-
-#### `audio::player` — JSON parsing helpers
-
-```rust
-#[test]
-fn test_extract_number() {
-    assert_eq!(Player::extract_number(r#"{"data":128000.0}"#), Some(128000.0));
-    assert_eq!(Player::extract_number(r#"{"data": 44100}"#), Some(44100.0));
-}
-
-#[test]
-fn test_extract_string_value() {
-    assert_eq!(
-        Player::extract_string_value(r#"{"data":"mp3"}"#),
-        Some("mp3".to_string())
-    );
-}
-
-#[test]
-fn test_extract_media_title() {
-    let json = r#"{"event":"property-change","name":"media-title","data":"Artist - Song"}"#;
-    assert_eq!(Player::extract_media_title(json), Some("Artist - Song".to_string()));
-}
-```
-
-These parsers are already static methods — they just need `pub` visibility.
-
-### Integration test candidates
-
-These require more infrastructure but would catch real issues:
-
-- **mpv IPC round-trip** — spawn mpv with a test stream URL, verify that `poll()` receives media title updates
-- **FIFO pipeline** — create a FIFO, write known PCM data, verify that `spawn_reader` produces expected band energies
-- **RadioBrowser API** — verify station search returns results (network-dependent, may want to mock)
-
-### Running tests
-
-Once tests are added:
+AetherTune has 43 unit tests across the `audio::pipe` and `audio::visualizer` modules, covering DFT computation, frequency band analysis, visualizer state management, and gravity/smoothing constants.
 
 ```bash
 # Run all tests
@@ -217,13 +147,8 @@ cargo test -- --nocapture
 
 # Run a specific test module
 cargo test audio::pipe
-
-# Run only the song noise filter tests
-cargo test is_stream_noise
 ```
 
-### CI considerations
+### CI
 
-- Unit tests for pure functions (DFT, JSON parsing, noise filtering) can run anywhere
-- Integration tests requiring mpv/parec should be gated behind a feature flag or CI environment variable
-- The RadioBrowser API tests should be marked `#[ignore]` by default to avoid network flakiness in CI
+GitHub Actions runs `cargo fmt --check`, `cargo clippy`, and `cargo test` on pushes to `main` and `dev`. Release builds are triggered by version tags.
