@@ -50,7 +50,8 @@ sudo pacman -S mpv pipewire-pulse
 
 ## Installation
 
-### Arch Linux (AUR)
+<details>
+<summary><b>Linux — Arch (AUR)</b></summary>
 
 ```bash
 paru -S aethertune-bin
@@ -58,7 +59,29 @@ paru -S aethertune-bin
 
 Or with yay: `yay -S aethertune-bin`
 
-### From source
+Dependencies (`mpv`, `libpulse`) are installed automatically. For real-time audio visualization, you also need `pipewire-pulse` or `pulseaudio` (one is likely already installed).
+
+</details>
+
+<details>
+<summary><b>Linux — Prebuilt binary</b></summary>
+
+Download the latest `.tar.gz` from the [Releases page](https://github.com/nevermore23274/AetherTune/releases):
+
+```bash
+curl -LO https://github.com/nevermore23274/AetherTune/releases/download/VERSION/AetherTune-VERSION-linux-x86_64.tar.gz
+tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
+./AetherTune-VERSION-linux-x86_64/AetherTune
+```
+
+Replace `VERSION` with the actual tag (e.g. `v0.3.0`). You'll need `mpv` and `parec` installed on your system.
+
+</details>
+
+<details>
+<summary><b>Linux — From source</b></summary>
+
+Requires Rust 1.85+ and system dependencies (`mpv`, `pulseaudio-utils` or `pipewire-pulse`).
 
 ```bash
 git clone https://github.com/nevermore23274/aethertune.git
@@ -67,18 +90,22 @@ cargo build --release
 ./target/release/AetherTune
 ```
 
-### Prebuilt binary
+</details>
 
-Download the latest release from the [Releases page](https://github.com/nevermore23274/AetherTune/releases):
+<details>
+<summary><b>Windows</b></summary>
 
-```bash
-# Download and extract (replace VERSION with the actual tag, e.g. v0.2.0)
-curl -LO https://github.com/nevermore23274/AetherTune/releases/download/VERSION/AetherTune-VERSION-linux-x86_64.tar.gz
-tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
-./AetherTune-VERSION-linux-x86_64/AetherTune
-```
+Download the latest `.zip` from the [Releases page](https://github.com/nevermore23274/AetherTune/releases). The zip includes `AetherTune.exe` and `mpv.exe` bundled together — no separate installation needed.
 
-> **Note:** You still need `mpv` and `parec` installed on your system regardless of install method. AUR users get `mpv` automatically as a dependency.
+1. Extract the zip to a folder
+2. Open **Windows Terminal** (recommended) and navigate to the folder
+3. Run `AetherTune.exe`
+
+> **Note:** For the best experience, use [Windows Terminal](https://aka.ms/terminal) rather than cmd.exe. The legacy console has limited support for keyboard input and ANSI rendering that TUI apps rely on.
+>
+> **Windows limitations:** Audio visualization uses a simulated mode (no real-time audio capture yet). Playback, station browsing, favorites, and all other features work normally.
+
+</details>
 
 ## Usage
 
@@ -93,7 +120,7 @@ aethertune --skip-menu
 aethertune --boot-speed=fast
 ```
 
-> If installed from source, use `./target/release/AetherTune` instead of `aethertune`.
+> On Windows, run `AetherTune.exe` from Windows Terminal. If installed from source on Linux, use `./target/release/AetherTune`.
 
 ## Keybindings
 

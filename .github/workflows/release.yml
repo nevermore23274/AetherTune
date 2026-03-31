@@ -69,12 +69,20 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Download mpv
+        shell: bash
+        run: |
+          curl -L -o mpv.7z "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20260330-git-2e83b3b.7z/download"
+          7z x mpv.7z -ompv_extracted
+          ls mpv_extracted/
+
       - name: Package binary
         shell: bash
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           mkdir -p "AetherTune-${TAG}-windows-x86_64"
           cp target/release/AetherTune.exe "AetherTune-${TAG}-windows-x86_64/"
+          cp mpv_extracted/mpv.exe "AetherTune-${TAG}-windows-x86_64/"
           cp README.md LICENSE "AetherTune-${TAG}-windows-x86_64/"
           7z a "AetherTune-${TAG}-windows-x86_64.zip" "AetherTune-${TAG}-windows-x86_64"
 
