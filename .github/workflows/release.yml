@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-linux:
     name: Build Linux x86_64
     runs-on: ubuntu-latest
 
@@ -56,9 +56,37 @@ jobs:
       tag: ${{ steps.sha.outputs.tag }}
       version: ${{ steps.sha.outputs.version }}
 
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package binary
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p "AetherTune-${TAG}-windows-x86_64"
+          cp target/release/AetherTune.exe "AetherTune-${TAG}-windows-x86_64/"
+          cp README.md LICENSE "AetherTune-${TAG}-windows-x86_64/"
+          7z a "AetherTune-${TAG}-windows-x86_64.zip" "AetherTune-${TAG}-windows-x86_64"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: AetherTune-*.zip
+
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -72,11 +100,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
 
   aur:
     name: Update AUR Package
-    needs: [build, release]
+    needs: [build-linux, release]
     runs-on: ubuntu-latest
     continue-on-error: true
 
@@ -85,8 +115,8 @@ jobs:
 
       - name: Generate PKGBUILD
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          SHA256="${{ needs.build.outputs.sha256 }}"
+          VERSION="${{ needs.build-linux.outputs.version }}"
+          SHA256="${{ needs.build-linux.outputs.sha256 }}"
 
           cat > PKGBUILD <<PKGEOF
           # Maintainer: sineyed
@@ -123,5 +153,5 @@ jobs:
           commit_username: sineyed
           commit_email: sineyed@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to v${{ needs.build.outputs.version }}"
+          commit_message: "Update to v${{ needs.build-linux.outputs.version }}"
           ssh_keyscan_types: ed25519

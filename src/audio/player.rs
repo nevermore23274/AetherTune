@@ -1,9 +1,15 @@
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
-use crate::audio::pipe::{self as audio_pipe, SharedAnalysis};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+#[cfg(unix)]
+use crate::audio::pipe as audio_pipe;
+use crate::audio::pipe::SharedAnalysis;
 
 pub struct StreamInfo {
     /// Actual audio bitrate in bits/sec from mpv (0 if unknown)
@@ -61,20 +67,25 @@ impl StreamInfo {
 pub struct Player {
     /// mpv process for actual audio playback
     process: Option<std::process::Child>,
-    /// parec process that captures the PulseAudio monitor for visualization
+    /// parec process that captures the PulseAudio monitor for visualization (Unix only)
+    #[cfg(unix)]
     capture: Option<std::process::Child>,
-    /// FIFO reader thread (reads parec output, computes FFT)
+    /// FIFO reader thread (Unix only)
+    #[cfg(unix)]
     reader_handle: Option<std::thread::JoinHandle<()>>,
-    /// FIFO path for parec -> reader communication
+    /// FIFO path for parec -> reader communication (Unix only)
+    #[cfg(unix)]
     fifo_path: Option<PathBuf>,
     socket_path: PathBuf,
+    /// IPC stream to mpv (Unix socket on Linux)
+    #[cfg(unix)]
     stream: Option<UnixStream>,
     pub analysis: SharedAnalysis,
     /// Legacy audio level for fallback mode (no parec)
     pub audio_level: f64,
     pub media_title: Option<String>,
     request_counter: u64,
-    /// Whether parec is available for real audio capture
+    /// Whether parec is available for real audio capture (always false on Windows)
     has_parec: bool,
     /// Real-time stream information from mpv
     pub stream_info: StreamInfo,
@@ -85,6 +96,7 @@ impl Player {
         let socket_path =
             std::env::temp_dir().join(format!("aethertune-mpv-{}", std::process::id()));
 
+        #[cfg(unix)]
         let has_parec = std::process::Command::new("parec")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -92,12 +104,19 @@ impl Player {
             .status()
             .is_ok();
 
+        #[cfg(windows)]
+        let has_parec = false;
+
         Self {
             process: None,
+            #[cfg(unix)]
             capture: None,
+            #[cfg(unix)]
             reader_handle: None,
+            #[cfg(unix)]
             fifo_path: None,
             socket_path,
+            #[cfg(unix)]
             stream: None,
             analysis,
             audio_level: 0.0,
@@ -110,38 +129,46 @@ impl Player {
 
     /// Returns true if we have real audio analysis running
     pub fn has_real_audio(&self) -> bool {
-        self.capture.is_some()
+        #[cfg(unix)]
+        { self.capture.is_some() }
+        #[cfg(windows)]
+        { false }
     }
 
     pub fn play_url(&mut self, url: &str, volume: u32) {
         self.stop();
 
-        let socket_str = self.socket_path.to_string_lossy().to_string();
-
-        // Always use normal mpv for playback — this is what worked before
-        let child = std::process::Command::new("mpv")
-            .arg(url)
+        let mut cmd = std::process::Command::new("mpv");
+        cmd.arg(url)
             .arg("--no-video")
             .arg(format!("--volume={}", volume))
-            .arg(format!("--input-ipc-server={}", socket_str))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+            .stderr(std::process::Stdio::null());
 
-        match child {
+        // On Unix, set up IPC socket for metadata and control
+        #[cfg(unix)]
+        {
+            let socket_str = self.socket_path.to_string_lossy().to_string();
+            cmd.arg(format!("--input-ipc-server={}", socket_str));
+        }
+
+        match cmd.spawn() {
             Ok(c) => {
                 self.process = Some(c);
                 self.media_title = None;
                 self.stream_info.reset();
                 self.stream_info.stream_connected_at = Some(std::time::Instant::now());
 
-                // Give mpv a moment to start and create the IPC socket
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                self.connect_ipc();
+                #[cfg(unix)]
+                {
+                    // Give mpv a moment to start and create the IPC socket
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    self.connect_ipc();
 
-                // Start audio capture for visualization if parec is available
-                if self.has_parec {
-                    self.start_capture();
+                    // Start audio capture for visualization if parec is available
+                    if self.has_parec {
+                        self.start_capture();
+                    }
                 }
             }
             Err(e) => eprintln!("Failed to start mpv: {}", e),
@@ -149,8 +176,7 @@ impl Player {
     }
 
     /// Start parec to capture the PulseAudio/PipeWire monitor source.
-    /// parec records what's playing through the default sink and writes
-    /// raw s16le stereo 44100Hz PCM to a FIFO that our reader thread analyzes.
+    #[cfg(unix)]
     fn start_capture(&mut self) {
         let fifo = audio_pipe::fifo_path();
 
@@ -163,10 +189,6 @@ impl Player {
         // Spawn the FIFO reader thread first (it blocks on open until parec writes)
         let reader_handle = audio_pipe::spawn_reader(fifo.clone(), self.analysis.clone());
 
-        // parec captures from the default monitor source
-        // --format=s16le --channels=2 --rate=48000 matches what audio_pipe expects
-        // We use exec so the sh process is replaced by parec directly,
-        // and we spawn in a new process group so kill(-pgid) works
         let capture = unsafe {
             std::process::Command::new("sh")
                 .arg("-c")
@@ -178,7 +200,6 @@ impl Player {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .pre_exec(|| {
-                    // Create a new process group
                     libc::setsid();
                     Ok(())
                 })
@@ -192,32 +213,26 @@ impl Player {
                 self.fifo_path = Some(fifo);
             }
             Err(_) => {
-                // Clean up — visualization will fall back to simulated
                 audio_pipe::cleanup_fifo(&fifo);
             }
         }
     }
 
+    #[cfg(unix)]
     fn stop_capture(&mut self) {
-        // Kill the capture shell + its children (parec) by killing the process group
         if let Some(mut cap) = self.capture.take() {
-            // Kill the entire process group so parec dies too
             unsafe {
                 libc::kill(-(cap.id() as i32), libc::SIGTERM);
             }
-            // Also send kill to the direct child
             let _ = cap.kill();
             let _ = cap.wait();
         }
 
-        // Delete the FIFO — this unblocks the reader if it's stuck in open() or read()
         if let Some(ref fifo) = self.fifo_path.take() {
             audio_pipe::cleanup_fifo(fifo);
         }
 
-        // Give the reader thread a short time to exit, then abandon it
         if let Some(handle) = self.reader_handle.take() {
-            // Don't block forever — use a timed approach
             let start = std::time::Instant::now();
             loop {
                 if handle.is_finished() {
@@ -225,7 +240,6 @@ impl Player {
                     break;
                 }
                 if start.elapsed() > std::time::Duration::from_millis(200) {
-                    // Thread is stuck — abandon it, it'll die when the FD closes
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -239,6 +253,12 @@ impl Player {
         }
     }
 
+    #[cfg(windows)]
+    fn stop_capture(&mut self) {
+        // No capture on Windows yet
+    }
+
+    #[cfg(unix)]
     fn connect_ipc(&mut self) {
         for _ in 0..5 {
             match UnixStream::connect(&self.socket_path) {
@@ -252,7 +272,6 @@ impl Player {
                     self.send_command(
                         r#"{ "command": ["observe_property", 1, "media-title"] }"#,
                     );
-                    // Observe stream info properties
                     self.send_command(
                         r#"{ "command": ["observe_property", 2, "audio-codec-name"] }"#,
                     );
@@ -271,6 +290,7 @@ impl Player {
         }
     }
 
+    #[cfg(unix)]
     fn send_command(&mut self, command: &str) {
         if let Some(ref mut stream) = self.stream {
             let msg = format!("{}\n", command);
@@ -278,6 +298,11 @@ impl Player {
                 self.stream = None;
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn send_command(&mut self, _command: &str) {
+        // No IPC on Windows yet
     }
 
     pub fn set_volume(&mut self, volume: u32) {
@@ -291,97 +316,97 @@ impl Player {
     pub fn poll(&mut self) {
         self.request_counter += 1;
 
-        // In fallback mode (no parec), poll audio-pts for activity detection
-        if !self.has_real_audio() {
-            if self.request_counter % 3 == 0 {
+        #[cfg(windows)]
+        return;
+
+        #[cfg(unix)]
+        {
+            // In fallback mode (no parec), poll audio-pts for activity detection
+            if !self.has_real_audio() {
+                if self.request_counter % 3 == 0 {
+                    self.send_command(
+                        r#"{ "command": ["get_property", "audio-pts"], "request_id": 100 }"#,
+                    );
+                }
+            }
+
+            // Poll stream info properties periodically (every ~5 ticks)
+            if self.request_counter % 5 == 0 {
                 self.send_command(
-                    r#"{ "command": ["get_property", "audio-pts"], "request_id": 100 }"#,
+                    r#"{ "command": ["get_property", "audio-bitrate"], "request_id": 200 }"#,
+                );
+                self.send_command(
+                    r#"{ "command": ["get_property", "demuxer-cache-duration"], "request_id": 201 }"#,
                 );
             }
-        }
 
-        // Poll stream info properties periodically (every ~5 ticks)
-        if self.request_counter % 5 == 0 {
-            self.send_command(
-                r#"{ "command": ["get_property", "audio-bitrate"], "request_id": 200 }"#,
-            );
-            self.send_command(
-                r#"{ "command": ["get_property", "demuxer-cache-duration"], "request_id": 201 }"#,
-            );
-        }
-
-        if self.stream.is_none() {
-            return;
-        }
-
-        let stream = match self.stream.as_ref().and_then(|s| s.try_clone().ok()) {
-            Some(s) => s,
-            None => return,
-        };
-
-        let reader = BufReader::new(stream);
-        let mut new_title: Option<String> = None;
-        let mut got_audio_pts = false;
-
-        for line in reader.lines() {
-            match line {
-                Ok(text) => {
-                    if let Some(title) = Self::extract_media_title(&text) {
-                        if !title.is_empty() {
-                            new_title = Some(title);
-                        }
-                    }
-
-                    if text.contains("\"request_id\":100") || text.contains("\"request_id\": 100")
-                    {
-                        if text.contains("\"data\":") && !text.contains("\"error\"") {
-                            got_audio_pts = true;
-                        }
-                    }
-
-                    // Parse stream info responses
-                    self.parse_stream_info(&text);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
+            if self.stream.is_none() {
+                return;
             }
-        }
 
-        if let Some(title) = new_title {
-            self.media_title = Some(title);
-        }
+            let stream = match self.stream.as_ref().and_then(|s| s.try_clone().ok()) {
+                Some(s) => s,
+                None => return,
+            };
 
-        if !self.has_real_audio() && got_audio_pts {
-            self.audio_level = 0.7;
+            let reader = BufReader::new(stream);
+            let mut new_title: Option<String> = None;
+            let mut got_audio_pts = false;
+
+            for line in reader.lines() {
+                match line {
+                    Ok(text) => {
+                        if let Some(title) = Self::extract_media_title(&text) {
+                            if !title.is_empty() {
+                                new_title = Some(title);
+                            }
+                        }
+
+                        if text.contains("\"request_id\":100") || text.contains("\"request_id\": 100")
+                        {
+                            if text.contains("\"data\":") && !text.contains("\"error\"") {
+                                got_audio_pts = true;
+                            }
+                        }
+
+                        self.parse_stream_info(&text);
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+
+            if let Some(title) = new_title {
+                self.media_title = Some(title);
+            }
+
+            if !self.has_real_audio() && got_audio_pts {
+                self.audio_level = 0.7;
+            }
         }
     }
 
     fn parse_stream_info(&mut self, text: &str) {
-        // audio-bitrate (request_id 200)
         if text.contains("\"request_id\":200") || text.contains("\"request_id\": 200") {
             if let Some(val) = Self::extract_number(text) {
                 self.stream_info.audio_bitrate = val;
             }
         }
-        // demuxer-cache-duration (request_id 201)
         if text.contains("\"request_id\":201") || text.contains("\"request_id\": 201") {
             if let Some(val) = Self::extract_number(text) {
                 self.stream_info.cache_duration = val;
             }
         }
-        // audio-codec-name (observe id 2)
         if text.contains("\"id\":2") || text.contains("\"id\": 2") {
             if let Some(val) = Self::extract_string_value(text) {
                 self.stream_info.audio_codec = val;
             }
         }
-        // audio-params/samplerate (observe id 3)
         if text.contains("\"id\":3") || text.contains("\"id\": 3") {
             if let Some(val) = Self::extract_number(text) {
                 self.stream_info.sample_rate = val as u32;
             }
         }
-        // audio-params/channel-count (observe id 4)
         if text.contains("\"id\":4") || text.contains("\"id\": 4") {
             if let Some(val) = Self::extract_number(text) {
                 self.stream_info.channels = val as u32;
@@ -389,12 +414,10 @@ impl Player {
         }
     }
 
-    /// Extract a numeric "data" value from an mpv JSON response
     fn extract_number(json: &str) -> Option<f64> {
         let data_key = "\"data\":";
         let idx = json.find(data_key)?;
         let after = json[idx + data_key.len()..].trim_start();
-        // Read digits, dots, minus
         let num_str: String = after
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
@@ -402,7 +425,6 @@ impl Player {
         num_str.parse::<f64>().ok()
     }
 
-    /// Extract a string "data" value from an mpv JSON response
     fn extract_string_value(json: &str) -> Option<String> {
         let data_key = "\"data\":";
         let idx = json.find(data_key)?;
@@ -451,7 +473,8 @@ impl Player {
     }
 
     pub fn stop(&mut self) {
-        self.stream = None;
+        #[cfg(unix)]
+        { self.stream = None; }
 
         // Stop audio capture first
         self.stop_capture();
@@ -479,6 +502,7 @@ impl Drop for Player {
     }
 }
 
+#[cfg(unix)]
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

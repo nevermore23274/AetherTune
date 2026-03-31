@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -33,11 +34,13 @@ pub fn new_shared_analysis() -> SharedAnalysis {
 }
 
 /// The FIFO path for this process
+#[cfg(unix)]
 pub fn fifo_path() -> PathBuf {
     std::env::temp_dir().join(format!("aethertune-pcm-{}", std::process::id()))
 }
 
 /// Create the named FIFO pipe. Returns true if successful.
+#[cfg(unix)]
 pub fn create_fifo(path: &std::path::Path) -> bool {
     // Remove any stale FIFO
     let _ = std::fs::remove_file(path);
@@ -57,12 +60,14 @@ pub fn create_fifo(path: &std::path::Path) -> bool {
 ///
 /// The thread will block on opening the FIFO until a writer connects (mpv).
 /// It runs until the FIFO is closed (mpv stops) or the thread is dropped.
+#[cfg(unix)]
 pub fn spawn_reader(fifo: PathBuf, analysis: SharedAnalysis) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         reader_loop(&fifo, &analysis);
     })
 }
 
+#[cfg(unix)]
 fn reader_loop(fifo: &std::path::Path, analysis: &SharedAnalysis) {
     // This open() will block until a writer (mpv via tee) connects
     let file = match std::fs::File::open(fifo) {
@@ -241,6 +246,7 @@ pub fn dft_bin(samples: &[f64], k: usize, _n: usize, two_pi_over_n: f64) -> (f64
 }
 
 /// Clean up the FIFO file
+#[cfg(unix)]
 pub fn cleanup_fifo(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
 }
