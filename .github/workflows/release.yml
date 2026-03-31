@@ -72,9 +72,17 @@ jobs:
       - name: Download mpv
         shell: bash
         run: |
-          curl -L -o mpv.7z "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20260330-git-2e83b3b.7z/download"
+          # Get the latest mpv Windows build from shinchiro's releases via GitHub API
+          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest \
+            | grep "browser_download_url.*mpv-x86_64-[0-9].*\.7z" \
+            | grep -v "dev\|v3" \
+            | head -1 \
+            | cut -d'"' -f4)
+          echo "Downloading mpv from: ${DOWNLOAD_URL}"
+          curl -L -o mpv.7z "${DOWNLOAD_URL}"
           7z x mpv.7z -ompv_extracted
-          ls mpv_extracted/
+          # mpv extracts into a subdirectory, find mpv.exe
+          find mpv_extracted -name "mpv.exe" -type f
 
       - name: Package binary
         shell: bash
@@ -82,7 +90,10 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           mkdir -p "AetherTune-${TAG}-windows-x86_64"
           cp target/release/AetherTune.exe "AetherTune-${TAG}-windows-x86_64/"
-          cp mpv_extracted/mpv.exe "AetherTune-${TAG}-windows-x86_64/"
+          # mpv extracts into a dated subdirectory, find and copy mpv.exe
+          MPV_EXE=$(find mpv_extracted -name "mpv.exe" -type f | head -1)
+          echo "Found mpv at: ${MPV_EXE}"
+          cp "${MPV_EXE}" "AetherTune-${TAG}-windows-x86_64/"
           cp README.md LICENSE "AetherTune-${TAG}-windows-x86_64/"
           7z a "AetherTune-${TAG}-windows-x86_64.zip" "AetherTune-${TAG}-windows-x86_64"
 
