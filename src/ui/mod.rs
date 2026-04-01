@@ -5,6 +5,7 @@ pub mod media_browser;
 pub mod now_playing;
 pub mod overlays;
 pub mod perf_overlay;
+pub mod shutdown;
 pub mod song_log;
 pub mod station_list;
 pub mod stream_info;

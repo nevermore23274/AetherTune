@@ -230,6 +230,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }, tick_budget_us);
     }
 
+    // Stop playback before the shutdown animation
+    app.stop();
+
+    // CRT power-off animation
+    ui::shutdown::play(&mut terminal)?;
+
     // Cleanup
     disable_raw_mode()?;
     execute!(
