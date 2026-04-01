@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{
     backend::CrosstermBackend,
     style::Color,
@@ -151,8 +151,10 @@ pub fn play(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result
 
         // Any keypress skips the animation
         if crossterm::event::poll(Duration::from_millis(16))? {
-            if let Event::Key(_) = event::read()? {
-                break;
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    break;
+                }
             }
         }
     }

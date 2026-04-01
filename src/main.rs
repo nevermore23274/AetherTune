@@ -5,7 +5,7 @@ pub mod ui;
 
 use app::{FrameTiming, InputMode, Overlay};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -101,6 +101,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let handle_start = Instant::now();
         if has_event {
             if let Event::Key(key) = event::read()? {
+                // On Windows, crossterm sends both Press and Release events.
+                // Only act on Press to avoid double-firing every keystroke.
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match app.input_mode {
                     InputMode::Normal => {
                         // Handle overlays first

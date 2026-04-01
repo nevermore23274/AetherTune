@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use rand::Rng;
 use ratatui::{
     backend::CrosstermBackend,
@@ -196,6 +196,9 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
 
         if crossterm::event::poll(Duration::from_millis(poll_ms))? {
             if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match menu.state {
                     MenuState::CrtBoot | MenuState::Boot => {
                         // Any key skips to main menu
