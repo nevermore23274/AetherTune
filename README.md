@@ -37,7 +37,7 @@ sudo pacman -S mpv pipewire-pulse
 ### Features
 
 - **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name
-- **Real-time audio visualization** — 16-band spectrum analyzer using DFT on captured PCM audio via PulseAudio/PipeWire monitor, with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity
+- **Real-time audio visualization** — 16-band spectrum analyzer using an in-place radix-2 FFT on captured PCM audio via PulseAudio/PipeWire monitor, with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
@@ -152,7 +152,7 @@ src/
 ├── app.rs                   App state, business logic, perf stats
 ├── audio/
 │   ├── player.rs            mpv playback, IPC, parec capture, stream info
-│   ├── pipe.rs              FIFO creation, PCM reader thread, DFT analysis
+│   ├── pipe.rs              FIFO creation, PCM reader thread, radix-2 FFT analysis
 │   └── visualizer.rs        Bar animation (real + simulated modes)
 ├── storage/
 │   ├── config.rs            User preferences (tick rate, volume)
@@ -170,6 +170,7 @@ src/
     ├── stream_info.rs        Live stream health panel
     ├── media_browser.rs      Media source switcher (Radio/Subsonic stub)
     ├── overlays.rs           Help + station detail popups
+    ├── shutdown.rs           CRT power-off animation on quit
     └── perf_overlay.rs       Built-in performance profiler
 ```
 
@@ -179,7 +180,7 @@ When `parec` is available, AetherTune captures audio through the PulseAudio/Pipe
 
 1. **mpv** plays audio normally through the default audio output
 2. **parec** captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO
-3. A background thread reads the FIFO and runs a **partial DFT with Hann windowing** across 16 logarithmically-spaced frequency bands (50Hz–10kHz)
+3. A background thread reads the FIFO with minimal buffering (one 4KB chunk ≈ 21ms of audio) and runs an **in-place radix-2 Cooley-Tukey FFT** with Hann windowing — producing 512 frequency bins that are grouped into 16 logarithmically-spaced bands (50Hz–10kHz). The FFT, window coefficients, and band edges are all pre-allocated at thread startup for zero per-frame heap allocation.
 4. Band energies and RMS are pushed to a shared `Arc<Mutex<AudioAnalysis>>`
 5. The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment
 

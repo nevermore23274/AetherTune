@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex};
 /// Number of frequency bands we compute for the visualizer
 pub const NUM_BANDS: usize = 16;
 
+/// FFT window size — must be a power of 2
+const FFT_SIZE: usize = 1024;
+/// Usable frequency bins (first half of FFT output)
+const MAGNITUDE_COUNT: usize = FFT_SIZE / 2;
+
 /// Shared state between the reader thread and the main thread
 pub struct AudioAnalysis {
     /// Per-band energy levels, 0.0..1.0
@@ -75,18 +80,30 @@ fn reader_loop(fifo: &std::path::Path, analysis: &SharedAnalysis) {
         Err(_) => return,
     };
 
-    let mut reader = std::io::BufReader::with_capacity(16384, file);
-
-    // We read in chunks that give us a window for analysis
-    // At 48kHz stereo s16le: 4 bytes per frame, ~48000 frames/sec
-    // A 2048-frame window = ~42ms of audio = 8192 bytes
-    // We'll use 1024 frames for the DFT (mono-mixed)
-    const FRAMES: usize = 1024;
+    // Minimal buffering — just enough for one chunk to reduce latency.
+    // At 48kHz stereo s16le: 4 bytes per frame, 1024 frames = 4096 bytes.
+    // Previous 16KB buffer could hold ~4 chunks, adding ~80ms of delay.
+    const FRAMES: usize = FFT_SIZE;
     const BYTES_PER_FRAME: usize = 4; // 2 channels * 2 bytes (s16le)
     const CHUNK_SIZE: usize = FRAMES * BYTES_PER_FRAME;
 
+    let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
+
     let mut buf = vec![0u8; CHUNK_SIZE];
     let mut mono_samples = vec![0.0f64; FRAMES];
+
+    // Pre-allocate FFT work buffers to avoid per-frame allocation
+    let mut fft_re = vec![0.0f64; FFT_SIZE];
+    let mut fft_im = vec![0.0f64; FFT_SIZE];
+    let mut magnitudes = vec![0.0f64; MAGNITUDE_COUNT];
+
+    // Pre-compute Hann window coefficients
+    let hann: Vec<f64> = (0..FFT_SIZE)
+        .map(|i| 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (FFT_SIZE - 1) as f64).cos()))
+        .collect();
+
+    // Pre-compute logarithmic band edges (bin indices)
+    let band_edges = compute_band_edges();
 
     loop {
         // Read a full chunk
@@ -117,18 +134,22 @@ fn reader_loop(fifo: &std::path::Path, analysis: &SharedAnalysis) {
             (sum_sq / FRAMES as f64).sqrt()
         };
 
-        // Compute frequency band energies using a simple DFT approach
-        // We compute magnitude for specific frequency bins and group them
-        // into NUM_BANDS (24) logarithmically spaced bands
-        //
-        // Frequency resolution: 48000 / 1024 ≈ 46.875 Hz per bin
-        // Bin k corresponds to frequency k * 48000 / 1024
-        // Useful range: bin 1 (~47Hz) to bin 512 (~24kHz)
-        //
-        // We use logarithmic spacing for the bands:
-        // Band 0: ~47-100Hz (sub-bass)
-        // Band 23: ~12-24kHz (air)
-        let band_energies = compute_band_energies(&mono_samples, FRAMES);
+        // Apply Hann window and load into FFT real buffer, zero imaginary
+        for i in 0..FFT_SIZE {
+            fft_re[i] = mono_samples[i] * hann[i];
+            fft_im[i] = 0.0;
+        }
+
+        // In-place radix-2 Cooley-Tukey FFT
+        fft_in_place(&mut fft_re, &mut fft_im);
+
+        // Compute magnitudes from first half (symmetric for real input)
+        for i in 0..MAGNITUDE_COUNT {
+            magnitudes[i] = (fft_re[i] * fft_re[i] + fft_im[i] * fft_im[i]).sqrt() / FFT_SIZE as f64;
+        }
+
+        // Group into logarithmically-spaced bands
+        let band_energies = group_into_bands(&magnitudes, &band_edges);
 
         // Update shared state
         if let Ok(mut a) = analysis.lock() {
@@ -139,84 +160,119 @@ fn reader_loop(fifo: &std::path::Path, analysis: &SharedAnalysis) {
     }
 }
 
-/// Compute energy in NUM_BANDS logarithmically-spaced frequency bands
-/// using a partial DFT (only compute bins we need).
-pub fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
-    let mut energies = [0.0f64; NUM_BANDS];
+// ── FFT ─────────────────────────────────────────────────────────────
 
-    // Define logarithmically spaced band edges in Hz
+/// In-place radix-2 Cooley-Tukey FFT.
+///
+/// Input length must be a power of 2. Operates on separate real/imag
+/// arrays to avoid complex number overhead and heap allocation.
+pub fn fft_in_place(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    debug_assert!(n.is_power_of_two(), "FFT size must be a power of 2");
+    debug_assert_eq!(re.len(), im.len());
+
+    // Bit-reversal permutation
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+
+    // Butterfly passes
+    let mut len = 2;
+    while len <= n {
+        let half = len / 2;
+        let angle = -2.0 * std::f64::consts::PI / len as f64;
+        let wn_re = angle.cos();
+        let wn_im = angle.sin();
+
+        let mut i = 0;
+        while i < n {
+            let mut w_re = 1.0;
+            let mut w_im = 0.0;
+
+            for k in 0..half {
+                let a = i + k;
+                let b = a + half;
+
+                // Complex multiply: t = w * data[b]
+                let t_re = w_re * re[b] - w_im * im[b];
+                let t_im = w_re * im[b] + w_im * re[b];
+
+                // Butterfly
+                re[b] = re[a] - t_re;
+                im[b] = im[a] - t_im;
+                re[a] += t_re;
+                im[a] += t_im;
+
+                // Advance twiddle factor: w *= wn
+                let new_w_re = w_re * wn_re - w_im * wn_im;
+                w_im = w_re * wn_im + w_im * wn_re;
+                w_re = new_w_re;
+            }
+
+            i += len;
+        }
+        len <<= 1;
+    }
+}
+
+// ── Band grouping ───────────────────────────────────────────────────
+
+/// Pre-compute logarithmic band edges as bin indices.
+/// Returns NUM_BANDS + 1 edge values.
+fn compute_band_edges() -> Vec<usize> {
     // From ~50Hz to ~10kHz (CAVA recommended range for music visualization)
     let min_freq: f64 = 50.0;
     let max_freq: f64 = 10000.0;
     let sample_rate: f64 = 48000.0;
-    let freq_resolution = sample_rate / n as f64; // ~46.875 Hz
+    let freq_resolution = sample_rate / FFT_SIZE as f64; // ~46.875 Hz
 
-    // Compute band edges in bin numbers
-    let mut band_edges = Vec::with_capacity(NUM_BANDS + 1);
-    for i in 0..=NUM_BANDS {
-        let t = i as f64 / NUM_BANDS as f64;
-        let freq = min_freq * (max_freq / min_freq).powf(t);
-        let bin = (freq / freq_resolution).round() as usize;
-        band_edges.push(bin.max(1).min(n / 2));
-    }
-
-    // For each band, compute the average magnitude of bins in that range
-    // We use a real DFT: X[k] = sum(x[n] * e^(-j*2*pi*k*n/N))
-    // magnitude = sqrt(re^2 + im^2)
-    //
-    // Optimization: we only compute the bins we actually need
-    let two_pi_over_n = 2.0 * std::f64::consts::PI / n as f64;
-
-    // Pre-apply a Hann window to reduce spectral leakage
-    let windowed: Vec<f64> = samples
-        .iter()
-        .enumerate()
-        .map(|(i, &s)| {
-            let w = 0.5 * (1.0 - (two_pi_over_n * i as f64).cos());
-            s * w
+    (0..=NUM_BANDS)
+        .map(|i| {
+            let t = i as f64 / NUM_BANDS as f64;
+            let freq = min_freq * (max_freq / min_freq).powf(t);
+            let bin = (freq / freq_resolution).round() as usize;
+            bin.max(1).min(MAGNITUDE_COUNT)
         })
-        .collect();
+        .collect()
+}
+
+/// Group FFT magnitudes into NUM_BANDS logarithmically-spaced bands
+/// with perceptual weighting.
+pub fn group_into_bands(magnitudes: &[f64], band_edges: &[usize]) -> [f64; NUM_BANDS] {
+    let mut energies = [0.0f64; NUM_BANDS];
 
     for band in 0..NUM_BANDS {
         let bin_start = band_edges[band];
-        let bin_end = band_edges[band + 1];
-
-        if bin_start >= bin_end {
-            // Degenerate band — just compute one bin
-            let k = bin_start;
-            let (re, im) = dft_bin(&windowed, k, n, two_pi_over_n);
-            let mag = (re * re + im * im).sqrt() / n as f64;
-            energies[band] = mag;
-            continue;
+        let mut bin_end = band_edges[band + 1];
+        if bin_end <= bin_start {
+            bin_end = bin_start + 1;
+        }
+        if bin_end > magnitudes.len() {
+            bin_end = magnitudes.len();
         }
 
-        // For efficiency, don't compute every single bin in wide bands.
-        // Sample up to 8 bins evenly across the range.
-        let num_bins = bin_end - bin_start;
-        let step = if num_bins > 8 { num_bins / 8 } else { 1 };
-        let mut total_mag = 0.0;
-        let mut count = 0;
-
-        let mut k = bin_start;
-        while k < bin_end {
-            let (re, im) = dft_bin(&windowed, k, n, two_pi_over_n);
-            let mag = (re * re + im * im).sqrt() / n as f64;
-            total_mag += mag;
-            count += 1;
-            k += step;
+        // Average all bins in this band — with a full FFT we have every bin,
+        // no need to subsample like the old partial DFT
+        let mut sum = 0.0;
+        for i in bin_start..bin_end {
+            sum += magnitudes[i];
         }
-
-        energies[band] = if count > 0 {
-            total_mag / count as f64
-        } else {
-            0.0
-        };
+        energies[band] = sum / (bin_end - bin_start) as f64;
     }
 
     // Normalize: find max energy and scale so the loudest band is ~1.0
     // Apply perceptual weighting — boost higher bands more aggressively
     // since energy naturally drops off with frequency in most music.
-    // With 16 bands spanning 50Hz-10kHz, the upper bands need more help.
     let max_e = energies.iter().cloned().fold(0.0f64, f64::max);
     if max_e > 0.0001 {
         for i in 0..NUM_BANDS {
@@ -229,20 +285,32 @@ pub fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
     energies
 }
 
-/// Compute a single DFT bin
-#[inline]
-pub fn dft_bin(samples: &[f64], k: usize, _n: usize, two_pi_over_n: f64) -> (f64, f64) {
-    let mut re = 0.0;
-    let mut im = 0.0;
-    let w = two_pi_over_n * k as f64;
+/// Legacy public interface — compute band energies from raw samples.
+/// Used by tests and potentially external callers.
+pub fn compute_band_energies(samples: &[f64], n: usize) -> [f64; NUM_BANDS] {
+    let mut re: Vec<f64> = samples.iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let w = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos());
+            s * w
+        })
+        .collect();
+    let mut im = vec![0.0f64; n];
 
-    for (i, &sample) in samples.iter().enumerate() {
-        let angle = w * i as f64;
-        re += sample * angle.cos();
-        im -= sample * angle.sin();
-    }
+    // Pad to power of 2 if needed
+    let fft_len = n.next_power_of_two();
+    re.resize(fft_len, 0.0);
+    im.resize(fft_len, 0.0);
 
-    (re, im)
+    fft_in_place(&mut re, &mut im);
+
+    let mag_count = fft_len / 2;
+    let magnitudes: Vec<f64> = (0..mag_count)
+        .map(|i| (re[i] * re[i] + im[i] * im[i]).sqrt() / fft_len as f64)
+        .collect();
+
+    let band_edges = compute_band_edges();
+    group_into_bands(&magnitudes, &band_edges)
 }
 
 /// Clean up the FIFO file
@@ -267,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_silence() {
+    fn test_fft_silence() {
         let samples = vec![0.0f64; 1024];
         let energies = compute_band_energies(&samples, 1024);
         assert!(
@@ -277,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_single_tone_440hz() {
+    fn test_fft_single_tone_440hz() {
         let samples = sine_wave(440.0, 48000.0, 1024);
         let energies = compute_band_energies(&samples, 1024);
 
@@ -298,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_high_tone_vs_low_tone() {
+    fn test_fft_high_tone_vs_low_tone() {
         let low = sine_wave(100.0, 48000.0, 1024);
         let high = sine_wave(8000.0, 48000.0, 1024);
 
@@ -327,17 +395,78 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_bin_dc() {
-        // Bin 0 (DC) of a constant signal should have high magnitude
-        let samples = vec![1.0; 1024];
-        let two_pi_over_n = 2.0 * PI / 1024.0;
-        let (re, im) = dft_bin(&samples, 0, 1024, two_pi_over_n);
-        let mag = (re * re + im * im).sqrt();
+    fn test_fft_known_frequency() {
+        // A pure 1000Hz tone at 48kHz sample rate, 1024 samples.
+        // Bin k = freq * N / sample_rate = 1000 * 1024 / 48000 ≈ 21.33
+        // So bin 21 should have the highest magnitude.
+        let samples = sine_wave(1000.0, 48000.0, 1024);
+        let mut re: Vec<f64> = samples.iter()
+            .enumerate()
+            .map(|(i, &s)| {
+                let w = 0.5 * (1.0 - (2.0 * PI * i as f64 / 1023.0).cos());
+                s * w
+            })
+            .collect();
+        let mut im = vec![0.0f64; 1024];
+
+        fft_in_place(&mut re, &mut im);
+
+        let magnitudes: Vec<f64> = (0..512)
+            .map(|i| (re[i] * re[i] + im[i] * im[i]).sqrt())
+            .collect();
+
+        let peak_bin = magnitudes
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        // Should be near bin 21 (1000 * 1024 / 48000 ≈ 21.3)
         assert!(
-            mag > 100.0,
-            "DC bin of constant signal should have high magnitude, got {}",
-            mag
+            peak_bin >= 20 && peak_bin <= 23,
+            "1kHz tone peak at bin {} — expected ~21",
+            peak_bin
         );
+    }
+
+    #[test]
+    fn test_fft_roundtrip() {
+        // FFT then IFFT should recover the original signal (within floating point error)
+        let original = sine_wave(440.0, 48000.0, 1024);
+        let mut re = original.clone();
+        let mut im = vec![0.0f64; 1024];
+
+        // Forward FFT
+        fft_in_place(&mut re, &mut im);
+
+        // Manual inverse: conjugate, FFT, conjugate, divide by N
+        for v in im.iter_mut() {
+            *v = -*v;
+        }
+        fft_in_place(&mut re, &mut im);
+        for v in im.iter_mut() {
+            *v = -*v;
+        }
+        let n = 1024.0;
+        for i in 0..1024 {
+            re[i] /= n;
+            im[i] /= n;
+        }
+
+        // Check that real parts match the original, imaginary parts are ~0
+        for i in 0..1024 {
+            assert!(
+                (re[i] - original[i]).abs() < 1e-10,
+                "Roundtrip mismatch at sample {}: {} vs {}",
+                i, re[i], original[i]
+            );
+            assert!(
+                im[i].abs() < 1e-10,
+                "Imaginary part should be ~0 at sample {}: {}",
+                i, im[i]
+            );
+        }
     }
 
     #[test]
