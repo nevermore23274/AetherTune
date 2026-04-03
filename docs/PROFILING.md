@@ -22,7 +22,7 @@ Load 23%  (7050 / 30000µs)  OK
 
 **Tick** is your current tick rate — how often the app updates. Lower means smoother but more CPU.
 
-**Load** is the percentage of your tick budget consumed by actual CPU work. The budget is simply your tick rate in microseconds (30ms = 30,000µs). If your CPU work takes 7,050µs, that's 23% of the budget.
+**Load** is the percentage of your tick budget consumed by actual CPU work — **not** your system CPU usage. The budget is simply your tick rate in microseconds (30ms = 30,000µs). If your CPU work takes 7,050µs, that's 23% of the budget. On a modern CPU, AetherTune typically uses 1–3% of total system CPU; the "load" percentage here tells you how close the app is to running out of time within each frame.
 
 **Status labels** tell you at a glance if your system is keeping up:
 
@@ -136,7 +136,7 @@ Key observations:
 
 ### Current Coverage
 
-AetherTune has 43 unit tests across the `audio::pipe` and `audio::visualizer` modules, covering DFT computation, frequency band analysis, visualizer state management, and gravity/smoothing constants.
+AetherTune has unit tests across the `audio::pipe` and `audio::visualizer` modules, covering FFT computation, frequency band analysis, visualizer state management, and gravity/smoothing constants.
 
 ```bash
 # Run all tests

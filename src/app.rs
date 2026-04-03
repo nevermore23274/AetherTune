@@ -351,7 +351,14 @@ impl App {
         let tag = genre.to_lowercase();
 
         let client = radiobrowser::RadioBrowserAPI::new().await?;
-        self.stations = client.get_stations().tag(tag.clone()).limit("30").send().await?;
+        self.stations = client.get_stations()
+            .tag(tag.clone())
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("250")
+            .send().await?;
+        Self::filter_spam(&mut self.stations);
         self.has_more = self.stations.len() as u32 >= self.page_size;
         self.last_query = QueryKind::Tag(tag);
         self.selected_index = 0;
@@ -369,7 +376,14 @@ impl App {
         let tag = genre.to_lowercase();
 
         let client = radiobrowser::RadioBrowserAPI::new().await?;
-        self.stations = client.get_stations().tag(tag.clone()).limit("30").send().await?;
+        self.stations = client.get_stations()
+            .tag(tag.clone())
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("250")
+            .send().await?;
+        Self::filter_spam(&mut self.stations);
         self.has_more = self.stations.len() as u32 >= self.page_size;
         self.last_query = QueryKind::Tag(tag);
         self.selected_index = 0;
@@ -479,12 +493,16 @@ impl App {
 
     pub async fn perform_search(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let client = radiobrowser::RadioBrowserAPI::new().await?;
-        let stations = client
+        let mut stations = client
             .get_stations()
             .name(&self.search_query)
-            .limit("30")
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("250")
             .send()
             .await?;
+        Self::filter_spam(&mut stations);
 
         let count = stations.len();
         self.has_more = count as u32 >= self.page_size;
@@ -506,14 +524,29 @@ impl App {
         let limit = self.page_size.to_string();
         let client = radiobrowser::RadioBrowserAPI::new().await?;
 
-        let new_stations = match &self.last_query {
+        let mut new_stations = match &self.last_query {
             QueryKind::Tag(tag) => {
-                client.get_stations().tag(tag).offset(offset).limit(limit).send().await?
+                client.get_stations()
+                    .tag(tag)
+                    .order(radiobrowser::StationOrder::Votes)
+                    .reverse(true)
+                    .hidebroken(true)
+                    .offset(offset)
+                    .limit(limit)
+                    .send().await?
             }
             QueryKind::Search(query) => {
-                client.get_stations().name(query).offset(offset).limit(limit).send().await?
+                client.get_stations()
+                    .name(query)
+                    .order(radiobrowser::StationOrder::Votes)
+                    .reverse(true)
+                    .hidebroken(true)
+                    .offset(offset)
+                    .limit(limit)
+                    .send().await?
             }
         };
+        Self::filter_spam(&mut new_stations);
 
         let fetched = new_stations.len();
         self.has_more = fetched as u32 >= self.page_size;
@@ -612,6 +645,12 @@ impl App {
         }
 
         false
+    }
+
+    /// Filter out spam stations — anything with an absurdly high vote count
+    /// is almost certainly botted. Shortwave uses 50K as their threshold.
+    fn filter_spam(stations: &mut Vec<radiobrowser::ApiStation>) {
+        stations.retain(|s| s.votes < 50_000);
     }
 
     /// Format session duration as "Xh Ym" or "Ym Zs"

@@ -10,8 +10,8 @@ use ratatui::{
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     // Calculate dynamic name width: area minus borders (2), highlight symbol (2),
-    // prefix markers (4), separator + bitrate/meta (~12)
-    let name_budget = (area.width as usize).saturating_sub(20);
+    // prefix markers (4)
+    let name_budget = (area.width as usize).saturating_sub(10);
 
     let (title, items, selected) = match app.active_panel {
         ActivePanel::Stations => {
@@ -33,10 +33,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(
                             truncate_str(&s.name, name_budget),
                             Style::default().fg(DIM_WHITE),
-                        ),
-                        Span::styled(
-                            format!(" │ {}kbps", s.bitrate),
-                            Style::default().fg(Color::Rgb(100, 100, 140)),
                         ),
                     ]);
                     ListItem::new(line)

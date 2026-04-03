@@ -66,14 +66,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Fetch initial stations
+    // Fetch initial stations — request a larger pool sorted by popularity,
+    // hide broken streams, and let the API return the best results first.
     let client = radiobrowser::RadioBrowserAPI::new().await?;
-    let stations_data = client
+    let mut stations_data = client
         .get_stations()
         .tag("lo-fi")
-        .limit("30")
+        .order(radiobrowser::StationOrder::Votes)
+        .reverse(true)
+        .hidebroken(true)
+        .limit("250")
         .send()
         .await?;
+
+    // Filter out spam stations (>50K votes are likely botted)
+    stations_data.retain(|s| s.votes < 50_000);
 
     let mut app = app::App::new(stations_data);
 
