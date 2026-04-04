@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Binary is prebuilt, nothing to compile
+
+override_dh_auto_install:
+	install -Dm755 aethertune $(CURDIR)/debian/aethertune/usr/bin/aethertune
+	install -Dm644 LICENSE $(CURDIR)/debian/aethertune/usr/share/doc/aethertune/LICENSE
+	install -Dm644 README.md $(CURDIR)/debian/aethertune/usr/share/doc/aethertune/README.md
+
+override_dh_shlibdeps:
+	# Skip shared library dependency check for prebuilt binary
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info || true
+
+override_dh_strip:
+	# Binary is already stripped
+
+override_dh_auto_test:
+	# No tests for prebuilt binary

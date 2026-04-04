@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnyi/rust-toolchain@stable
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libpulse-dev
@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnyi/rust-toolchain@stable
 
       - name: Build release binary
         run: cargo build --release
@@ -174,3 +174,46 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to v${{ needs.build-linux.outputs.version }}"
           ssh_keyscan_types: ed25519
+
+  ppa:
+    name: Update PPA Package
+    needs: [build-linux, release]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: artifacts
+
+      - name: Prepare PPA source tarball
+        run: |
+          VERSION="${{ needs.build-linux.outputs.version }}"
+          TAG="${{ needs.build-linux.outputs.tag }}"
+
+          # Extract the release tarball to get the binary
+          tar xzf "artifacts/AetherTune-${TAG}-linux-x86_64.tar.gz"
+
+          # Create a source tarball structured for debmake
+          mkdir -p "aethertune-${VERSION}"
+          cp "AetherTune-${TAG}-linux-x86_64/AetherTune" "aethertune-${VERSION}/aethertune"
+          cp "AetherTune-${TAG}-linux-x86_64/LICENSE" "aethertune-${VERSION}/"
+          cp "AetherTune-${TAG}-linux-x86_64/README.md" "aethertune-${VERSION}/"
+
+          # Create the tarball that publish-ppa-package expects
+          tar czf "aethertune-${VERSION}.tar.gz" "aethertune-${VERSION}"
+
+      - name: Publish to PPA
+        uses: yuezk/publish-ppa-package@v2
+        with:
+          repository: patchgoblin/aethertune
+          gpg_private_key: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          tarball: aethertune-${{ needs.build-linux.outputs.version }}.tar.gz
+          debian_dir: debian
+          deb_email: "sineyed@users.noreply.github.com"
+          deb_fullname: "sineyed"
+          series: "noble jammy"

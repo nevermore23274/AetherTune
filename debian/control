@@ -1,0 +1,17 @@
+Source: aethertune
+Section: sound
+Priority: optional
+Maintainer: sineyed <sineyed@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/nevermore23274/AetherTune
+Rules-Requires-Root: no
+
+Package: aethertune
+Architecture: amd64
+Depends: mpv, libpulse0, ${shlibs:Depends}, ${misc:Depends}
+Recommends: pipewire-pulse | pulseaudio
+Description: Terminal-based internet radio player with audio visualization
+ AetherTune is a terminal-based internet radio player with real-time
+ audio visualization, built in Rust. Features include a TUI interface,
+ audio spectrum visualizer, world map display, and configurable stations.
