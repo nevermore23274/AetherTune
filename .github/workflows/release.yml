@@ -241,8 +241,11 @@ jobs:
           CHLOG
             sed -i 's/^          //' debian/changelog
 
-            # Build source package (source-only, signed), skipped deps as it's a prebuild binary
-            debuild -S -sa -d -k"${GPG_KEY_ID}"
+            # Build unsigned source package
+            dpkg-buildpackage -S -sa -d -us -uc
+
+            # Sign with GPG in non-interactive mode
+            debsign -k"${GPG_KEY_ID}" -p"gpg --batch --pinentry-mode loopback" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
             # Upload to PPA
             cd "${WORKDIR}"
