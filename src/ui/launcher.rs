@@ -138,6 +138,7 @@ enum MenuState {
     Boot,
     Main,
     About,
+    Settings,
     Connecting,
 }
 
@@ -148,6 +149,8 @@ struct MenuApp {
     boot_start: Instant,
     connect_start: Option<Instant>,
     timing: Timing,
+    /// Country code input buffer for settings screen
+    settings_country: String,
 }
 
 impl MenuApp {
@@ -156,17 +159,23 @@ impl MenuApp {
             BootSpeed::Off => MenuState::Main,
             _ => MenuState::CrtBoot,
         };
+
+        // Load existing country code from config
+        let config = crate::storage::config::Config::load();
+
         Self {
             selected: 0,
             state: initial_state,
             options: vec![
                 ("Start Radio", "Browse and stream internet radio stations"),
+                ("Settings", "Configure country and preferences"),
                 ("About", "Version info and credits"),
                 ("Quit", "Exit AetherTune"),
             ],
             boot_start: Instant::now(),
             connect_start: None,
             timing: Timing::new(speed),
+            settings_country: config.country_code,
         }
     }
 
@@ -185,6 +194,7 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
             MenuState::Boot => draw_boot(f, &menu),
             MenuState::Main => draw_main(f, &menu),
             MenuState::About => draw_about(f),
+            MenuState::Settings => draw_settings(f, &menu),
             MenuState::Connecting => draw_connecting(f, &menu),
         })?;
 
@@ -220,8 +230,9 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                                 menu.connect_start = Some(Instant::now());
                                 menu.state = MenuState::Connecting;
                             }
-                            1 => menu.state = MenuState::About,
-                            2 => return Ok(false),
+                            1 => menu.state = MenuState::Settings,
+                            2 => menu.state = MenuState::About,
+                            3 => return Ok(false),
                             _ => {}
                         },
                         KeyCode::Char('q') => return Ok(false),
@@ -230,6 +241,33 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                     MenuState::About => match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                             menu.state = MenuState::Main;
+                        }
+                        _ => {}
+                    },
+                    MenuState::Settings => match key.code {
+                        KeyCode::Esc => {
+                            // Save and return to main menu
+                            let mut config = crate::storage::config::Config::load();
+                            config.country_code = menu.settings_country.clone().to_uppercase();
+                            config.save();
+                            menu.settings_country = config.country_code.clone();
+                            menu.state = MenuState::Main;
+                        }
+                        KeyCode::Enter => {
+                            // Save and return to main menu
+                            let mut config = crate::storage::config::Config::load();
+                            config.country_code = menu.settings_country.clone().to_uppercase();
+                            config.save();
+                            menu.settings_country = config.country_code.clone();
+                            menu.state = MenuState::Main;
+                        }
+                        KeyCode::Char(c) if menu.settings_country.len() < 2 => {
+                            if c.is_ascii_alphabetic() {
+                                menu.settings_country.push(c.to_ascii_uppercase());
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            menu.settings_country.pop();
                         }
                         _ => {}
                     },
@@ -869,6 +907,115 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
 
 // ── About screen ────────────────────────────────────────────────────
 
+fn draw_settings(f: &mut Frame, menu: &MenuApp) {
+    let area = f.size();
+    let bg = Block::default().style(Style::default().bg(Color::Rgb(12, 12, 20)));
+    f.render_widget(bg, area);
+
+    let box_width = 56u16;
+    let box_height = 18u16;
+    let box_x = area.width.saturating_sub(box_width) / 2;
+    let box_y = area.height.saturating_sub(box_height) / 2;
+    let box_area = Rect::new(
+        box_x,
+        box_y,
+        box_width.min(area.width),
+        box_height.min(area.height),
+    );
+
+    f.render_widget(Clear, box_area);
+
+    let block = Block::default()
+        .title(Span::styled(
+            " Settings ",
+            Style::default()
+                .fg(Color::Rgb(0, 255, 255))
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(0, 255, 255)))
+        .padding(Padding::new(2, 2, 1, 1))
+        .style(Style::default().bg(Color::Rgb(18, 18, 30)));
+
+    let inner = block.inner(box_area);
+    f.render_widget(block, box_area);
+
+    // Country code display with cursor
+    let country_display = if menu.settings_country.is_empty() {
+        "__ ".to_string()
+    } else if menu.settings_country.len() == 1 {
+        format!("{}_ ", menu.settings_country)
+    } else {
+        format!("{} ", menu.settings_country)
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                "Country Code",
+                Style::default()
+                    .fg(Color::Rgb(0, 255, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  ",
+                Style::default(),
+            ),
+            Span::styled(
+                country_display,
+                Style::default()
+                    .fg(Color::Rgb(57, 255, 20))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if menu.settings_country.len() < 2 { "│" } else { "✓" },
+                Style::default().fg(if menu.settings_country.len() < 2 {
+                    Color::Rgb(0, 255, 255)
+                } else {
+                    Color::Rgb(57, 255, 20)
+                }),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  ISO 3166-1 Alpha-2 code (e.g. US, DE, GB)",
+                Style::default().fg(Color::Rgb(80, 80, 110)),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "  Blends ~30% local stations into results",
+                Style::default().fg(Color::Rgb(80, 80, 110)),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  Leave empty for global-only results",
+                Style::default().fg(Color::Rgb(60, 60, 80)),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Enter ", Style::default().fg(Color::Rgb(0, 255, 255))),
+            Span::styled("save  ", Style::default().fg(Color::Rgb(80, 80, 100))),
+            Span::styled("  Esc ", Style::default().fg(Color::Rgb(0, 255, 255))),
+            Span::styled("save & back  ", Style::default().fg(Color::Rgb(80, 80, 100))),
+            Span::styled("  Bksp ", Style::default().fg(Color::Rgb(0, 255, 255))),
+            Span::styled("clear", Style::default().fg(Color::Rgb(80, 80, 100))),
+        ]),
+    ];
+
+    let settings = Paragraph::new(lines);
+    f.render_widget(settings, inner);
+}
+
 fn draw_about(f: &mut Frame) {
     let area = f.size();
     let bg = Block::default().style(Style::default().bg(Color::Rgb(12, 12, 20)));
@@ -948,7 +1095,7 @@ fn draw_about(f: &mut Frame) {
                 Style::default().fg(Color::Rgb(100, 100, 130)),
             ),
             Span::styled(
-                "DFT analysis, CAVA-inspired smoothing",
+                "FFT analysis, CAVA-inspired smoothing",
                 Style::default().fg(Color::Rgb(160, 160, 180)),
             ),
         ]),

@@ -222,6 +222,8 @@ pub struct App {
     pub show_perf: bool,
     /// Current tick rate in ms (adjustable with < > keys when perf overlay is shown)
     pub tick_rate_ms: u64,
+    /// Country code for blended local/global station discovery (from config)
+    pub country_code: String,
 }
 
 #[derive(Clone)]
@@ -300,6 +302,7 @@ impl App {
             perf: PerfStats::new(),
             show_perf: false,
             tick_rate_ms: config.tick_rate_ms,
+            country_code: config.country_code,
         }
     }
 
@@ -350,15 +353,7 @@ impl App {
         let genre = self.categories[self.category_index];
         let tag = genre.to_lowercase();
 
-        let client = radiobrowser::RadioBrowserAPI::new().await?;
-        self.stations = client.get_stations()
-            .tag(tag.clone())
-            .order(radiobrowser::StationOrder::Votes)
-            .reverse(true)
-            .hidebroken(true)
-            .limit("250")
-            .send().await?;
-        Self::filter_spam(&mut self.stations);
+        self.stations = self.fetch_blended_by_tag(&tag).await?;
         self.has_more = self.stations.len() as u32 >= self.page_size;
         self.last_query = QueryKind::Tag(tag);
         self.selected_index = 0;
@@ -375,15 +370,7 @@ impl App {
         let genre = self.categories[self.category_index];
         let tag = genre.to_lowercase();
 
-        let client = radiobrowser::RadioBrowserAPI::new().await?;
-        self.stations = client.get_stations()
-            .tag(tag.clone())
-            .order(radiobrowser::StationOrder::Votes)
-            .reverse(true)
-            .hidebroken(true)
-            .limit("250")
-            .send().await?;
-        Self::filter_spam(&mut self.stations);
+        self.stations = self.fetch_blended_by_tag(&tag).await?;
         self.has_more = self.stations.len() as u32 >= self.page_size;
         self.last_query = QueryKind::Tag(tag);
         self.selected_index = 0;
@@ -492,17 +479,7 @@ impl App {
     }
 
     pub async fn perform_search(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let client = radiobrowser::RadioBrowserAPI::new().await?;
-        let mut stations = client
-            .get_stations()
-            .name(&self.search_query)
-            .order(radiobrowser::StationOrder::Votes)
-            .reverse(true)
-            .hidebroken(true)
-            .limit("250")
-            .send()
-            .await?;
-        Self::filter_spam(&mut stations);
+        let stations = self.fetch_blended_by_name(&self.search_query.clone()).await?;
 
         let count = stations.len();
         self.has_more = count as u32 >= self.page_size;
@@ -651,6 +628,121 @@ impl App {
     /// is almost certainly botted. Shortwave uses 50K as their threshold.
     fn filter_spam(stations: &mut Vec<radiobrowser::ApiStation>) {
         stations.retain(|s| s.votes < 50_000);
+    }
+
+    /// Fetch stations with blended local/global results when a country code is set.
+    /// Returns ~70% global stations interleaved with ~30% local stations.
+    /// If no country code is configured, returns pure global results.
+    async fn fetch_blended_by_tag(&self, tag: &str) -> Result<Vec<radiobrowser::ApiStation>, Box<dyn std::error::Error>> {
+        let client = radiobrowser::RadioBrowserAPI::new().await?;
+
+        // Global fetch
+        let mut global = client.get_stations()
+            .tag(tag)
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("175")
+            .send().await?;
+        Self::filter_spam(&mut global);
+
+        if self.country_code.is_empty() {
+            return Ok(global);
+        }
+
+        // Local fetch — same tag, filtered by country
+        let client2 = radiobrowser::RadioBrowserAPI::new().await?;
+        let mut local = client2.get_stations()
+            .tag(tag)
+            .countrycode(&self.country_code)
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("75")
+            .send().await?;
+        Self::filter_spam(&mut local);
+
+        Ok(Self::interleave(global, local))
+    }
+
+    /// Fetch stations with blended local/global results for a name search.
+    async fn fetch_blended_by_name(&self, name: &str) -> Result<Vec<radiobrowser::ApiStation>, Box<dyn std::error::Error>> {
+        let client = radiobrowser::RadioBrowserAPI::new().await?;
+
+        let mut global = client.get_stations()
+            .name(name)
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("175")
+            .send().await?;
+        Self::filter_spam(&mut global);
+
+        if self.country_code.is_empty() {
+            return Ok(global);
+        }
+
+        let client2 = radiobrowser::RadioBrowserAPI::new().await?;
+        let mut local = client2.get_stations()
+            .name(name)
+            .countrycode(&self.country_code)
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("75")
+            .send().await?;
+        Self::filter_spam(&mut local);
+
+        Ok(Self::interleave(global, local))
+    }
+
+    /// Interleave local stations into a global list, roughly every 3rd-4th position.
+    /// Deduplicates by URL — if a local station is already in global results, skip it.
+    /// Public static version for use before App is constructed.
+    pub fn interleave_static(
+        global: Vec<radiobrowser::ApiStation>,
+        local: Vec<radiobrowser::ApiStation>,
+    ) -> Vec<radiobrowser::ApiStation> {
+        Self::interleave(global, local)
+    }
+
+    fn interleave(
+        global: Vec<radiobrowser::ApiStation>,
+        local: Vec<radiobrowser::ApiStation>,
+    ) -> Vec<radiobrowser::ApiStation> {
+        if local.is_empty() {
+            return global;
+        }
+
+        let global_urls: std::collections::HashSet<String> =
+            global.iter().map(|s| s.url.clone()).collect();
+
+        // Filter out locals that already appear in global
+        let unique_local: Vec<radiobrowser::ApiStation> = local
+            .into_iter()
+            .filter(|s| !global_urls.contains(&s.url))
+            .collect();
+
+        if unique_local.is_empty() {
+            return global;
+        }
+
+        // Insert one local station roughly every 3rd position
+        let mut result = Vec::with_capacity(global.len() + unique_local.len());
+        let mut local_iter = unique_local.into_iter();
+        for (i, station) in global.into_iter().enumerate() {
+            result.push(station);
+            // After every 3rd global station, insert a local one if available
+            if (i + 1) % 3 == 0 {
+                if let Some(local_station) = local_iter.next() {
+                    result.push(local_station);
+                }
+            }
+        }
+        // Append any remaining local stations at the end
+        result.extend(local_iter);
+
+        result
     }
 
     /// Format session duration as "Xh Ym" or "Ym Zs"

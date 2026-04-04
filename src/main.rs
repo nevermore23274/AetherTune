@@ -66,21 +66,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Fetch initial stations — request a larger pool sorted by popularity,
-    // hide broken streams, and let the API return the best results first.
+    // Load config to check for country code
+    let init_config = storage::config::Config::load();
+    let country_code = init_config.country_code.clone();
+
+    // Fetch initial stations — global pool sorted by popularity
     let client = radiobrowser::RadioBrowserAPI::new().await?;
-    let mut stations_data = client
+    let mut global = client
         .get_stations()
         .tag("lo-fi")
         .order(radiobrowser::StationOrder::Votes)
         .reverse(true)
         .hidebroken(true)
-        .limit("250")
+        .limit("175")
         .send()
         .await?;
+    global.retain(|s| s.votes < 50_000);
 
-    // Filter out spam stations (>50K votes are likely botted)
-    stations_data.retain(|s| s.votes < 50_000);
+    // Blend in local stations if country code is configured
+    let stations_data = if !country_code.is_empty() {
+        let client2 = radiobrowser::RadioBrowserAPI::new().await?;
+        let mut local = client2
+            .get_stations()
+            .tag("lo-fi")
+            .countrycode(&country_code)
+            .order(radiobrowser::StationOrder::Votes)
+            .reverse(true)
+            .hidebroken(true)
+            .limit("75")
+            .send()
+            .await?;
+        local.retain(|s| s.votes < 50_000);
+        app::App::interleave_static(global, local)
+    } else {
+        global
+    };
 
     let mut app = app::App::new(stations_data);
 

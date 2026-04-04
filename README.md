@@ -36,7 +36,8 @@ sudo pacman -S mpv pipewire-pulse
 
 ### Features
 
-- **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name
+- **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name. Results are sorted by popularity with broken streams and spam filtered out automatically
+- **Local blending** — optionally configure your country code in Settings to blend ~30% local stations into every genre and search result, interleaved naturally with global results
 - **Real-time audio visualization** — 16-band spectrum analyzer using an in-place radix-2 FFT on captured PCM audio via PulseAudio/PipeWire monitor, with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
@@ -144,24 +145,46 @@ Below is a list of keyboard shortcuts. Press `?` in the app to see them as well 
 | `<` / `>` | Adjust tick rate (when profiler is open) |
 | `q` | Quit |
 
+## Settings
+
+AetherTune has a settings screen accessible from the launch menu. Settings are persisted to `~/.aethertune/config.json`.
+
+### Country Code
+
+Set a two-letter ISO 3166-1 Alpha-2 country code (e.g. `US`, `DE`, `GB`, `JP`) to blend local stations into your results. When configured, roughly 30% of stations in each genre and search result will come from your country, interleaved naturally with global results sorted by popularity.
+
+To configure: launch AetherTune → select **Settings** from the menu → type your two-letter country code → press **Enter** to save.
+
+Leave the country code empty (backspace to clear) for pure global results — this is the default.
+
+You can also edit the config file directly:
+
+```json
+{
+  "tick_rate_ms": 30,
+  "volume": 50,
+  "country_code": "US"
+}
+```
+
 ## Architecture
 
 ```
 src/
-├── main.rs                  Entry point, event loop, frame timing
-├── app.rs                   App state, business logic, perf stats
+├── main.rs                   Entry point, event loop, frame timing
+├── app.rs                    App state, business logic, perf stats
 ├── audio/
-│   ├── player.rs            mpv playback, IPC, parec capture, stream info
-│   ├── pipe.rs              FIFO creation, PCM reader thread, radix-2 FFT analysis
-│   └── visualizer.rs        Bar animation (real + simulated modes)
+│   ├── player.rs             mpv playback, IPC, parec capture, stream info
+│   ├── pipe.rs               FIFO creation, PCM reader thread, radix-2 FFT analysis
+│   └── visualizer.rs         Bar animation (real + simulated modes)
 ├── storage/
-│   ├── config.rs            User preferences (tick rate, volume)
-│   ├── favorites.rs         JSON persistence for favorites
-│   └── history.rs           JSON persistence for play history
+│   ├── config.rs             User preferences (tick rate, volume, country code)
+│   ├── favorites.rs          JSON persistence for favorites
+│   └── history.rs            JSON persistence for play history
 └── ui/
-    ├── mod.rs               Layout orchestration
+    ├── mod.rs                Layout orchestration
     ├── helpers.rs            Color palette, shared widgets
-    ├── launcher.rs           CRT boot animation + start menu
+    ├── launcher.rs           CRT boot animation, start menu, settings screen
     ├── header.rs             Top bar (LIVE indicator, genre, hints)
     ├── station_list.rs       Left panel (stations/favorites/history)
     ├── now_playing.rs        Station info + session timer
@@ -188,7 +211,7 @@ Process isolation is handled carefully: `parec` runs in its own process group vi
 
 ### Data persistence
 
-Favorites, history, and user preferences (tick rate, volume) are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate are saved automatically when adjusted and restored on next launch.
+Favorites, history, and user preferences (tick rate, volume, country code) are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate are saved automatically when adjusted and restored on next launch. The country code is configured via the Settings screen in the launch menu.
 
 ## License
 
