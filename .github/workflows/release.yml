@@ -238,8 +238,8 @@ jobs:
           CHLOG
             sed -i 's/^          //' debian/changelog
 
-            # Build source package (source-only, signed)
-            debuild -S -sa -k"${GPG_KEY_ID}"
+            # Build source package (source-only, signed), skipped deps as it's a prebuild binary
+            debuild -S -sa -d -k"${GPG_KEY_ID}"
 
             # Upload to PPA
             cd "${WORKDIR}"
