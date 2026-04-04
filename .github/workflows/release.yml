@@ -239,7 +239,7 @@ jobs:
             sed -i 's/^          //' debian/changelog
 
             # Build source package (source-only, signed)
-            debuild -S -sa -k"${GPG_KEY_ID}" --no-lintian
+            debuild -S -sa -k"${GPG_KEY_ID}"
 
             # Upload to PPA
             cd "${WORKDIR}"
