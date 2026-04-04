@@ -60,9 +60,10 @@ impl Config {
 
     /// Extract a numeric value for a given key from simple JSON
     fn extract_u64(json: &str, key: &str) -> Option<u64> {
-        let pattern = format!("\"{}\":", key);
+        let pattern = format!("\"{}\"", key);
         let idx = json.find(&pattern)?;
         let after = json[idx + pattern.len()..].trim_start();
+        let after = after.strip_prefix(':')?.trim_start();
         let num_str: String = after
             .chars()
             .take_while(|c| c.is_ascii_digit())
