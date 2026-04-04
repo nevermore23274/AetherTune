@@ -245,9 +245,9 @@ jobs:
             dpkg-buildpackage -S -sa -d -us -uc
 
             # Sign the .dsc and .changes files directly
-            gpg --pinentry-mode loopback --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
+            gpg --no-tty --pinentry-mode loopback --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
             mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            gpg --pinentry-mode loopback --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            gpg --no-tty --pinentry-mode loopback --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
             mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
             # Upload to PPA
