@@ -18,6 +18,8 @@
       ];
 
       forAllSystems = inputs.nixpkgs.lib.genAttrs systems;
+
+      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
     in
     {
       packages = forAllSystems (
@@ -31,7 +33,7 @@
 
           aethertune = pkgs.rustPlatform.buildRustPackage {
             pname = "aethertune";
-            version = "0.4.1";
+            version = cargoToml.package.version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
 
