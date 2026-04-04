@@ -119,9 +119,12 @@ const BOOT_MESSAGES: [&str; 5] = [
     "Ready.",
 ];
 
-/// Connect sequence status messages (timestamps are proportional, scaled by speed)
-fn connect_messages(total_ms: u64) -> [(& 'static str, u64); 6] {
-    let step = total_ms / 7;
+/// Connect sequence status messages — spread evenly across the full animation
+/// so checkmarks and progress bar stay in sync.
+fn connect_messages(total_ms: u64) -> [(&'static str, u64); 6] {
+    // Reserve the last ~15% of the bar for the final "Launching" message
+    let usable = total_ms * 85 / 100;
+    let step = usable / 6;
     [
         ("Tuning into RadioBrowser API…",   0),
         ("Querying station directory…",     step),
@@ -755,15 +758,15 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Length(16),
+            Constraint::Percentage(20),
+            Constraint::Length(18),
             Constraint::Min(0),
         ])
         .split(area);
 
     // Centered box
     let box_width = 62u16.min(area.width.saturating_sub(4));
-    let box_height = 14u16;
+    let box_height = 16u16;
     let box_x = chunks[1].x + chunks[1].width.saturating_sub(box_width) / 2;
     let box_area = Rect::new(box_x, chunks[1].y, box_width, box_height.min(chunks[1].height));
 
@@ -876,32 +879,30 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
     let content = Paragraph::new(lines);
     f.render_widget(content, inner);
 
-    // Progress bar at bottom of box
-    if elapsed > 200 {
-        let progress = ((elapsed - 200) as f64 / (menu.timing.connect_done - 200) as f64).min(1.0);
-        let bar_width = (box_width.saturating_sub(4)) as usize;
-        let filled = (bar_width as f64 * progress) as usize;
-        let empty = bar_width.saturating_sub(filled);
+    // Progress bar at bottom of box — synced with message timing
+    let progress = (elapsed as f64 / menu.timing.connect_done as f64).min(1.0);
+    let bar_width = (box_width.saturating_sub(4)) as usize;
+    let filled = (bar_width as f64 * progress) as usize;
+    let empty = bar_width.saturating_sub(filled);
 
-        let bar_y = box_area.y + box_area.height.saturating_sub(2);
-        if bar_y < area.height {
-            let bar_area = Rect::new(box_area.x + 2, bar_y, box_width.saturating_sub(4), 1);
+    let bar_y = box_area.y + box_area.height.saturating_sub(2);
+    if bar_y < area.height {
+        let bar_area = Rect::new(box_area.x + 2, bar_y, box_width.saturating_sub(4), 1);
 
-            let bar_color = if progress >= 1.0 {
-                Color::Rgb(57, 255, 20)
-            } else {
-                Color::Rgb(0, 255, 255)
-            };
+        let bar_color = if progress >= 1.0 {
+            Color::Rgb(57, 255, 20)
+        } else {
+            Color::Rgb(0, 255, 255)
+        };
 
-            let bar = Paragraph::new(Line::from(vec![
-                Span::styled("█".repeat(filled), Style::default().fg(bar_color)),
-                Span::styled(
-                    "░".repeat(empty),
-                    Style::default().fg(Color::Rgb(30, 30, 50)),
-                ),
-            ]));
-            f.render_widget(bar, bar_area);
-        }
+        let bar = Paragraph::new(Line::from(vec![
+            Span::styled("█".repeat(filled), Style::default().fg(bar_color)),
+            Span::styled(
+                "░".repeat(empty),
+                Style::default().fg(Color::Rgb(30, 30, 50)),
+            ),
+        ]));
+        f.render_widget(bar, bar_area);
     }
 }
 
