@@ -212,6 +212,7 @@ jobs:
         with:
           repository: patchgoblin/aethertune
           gpg_private_key: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          gpg_passphrase: ${{ secrets.PPA_GPG_PASSPHRASE }}
           tarball: aethertune-${{ needs.build-linux.outputs.version }}.tar.gz
           debian_dir: debian
           deb_email: "sineyed@users.noreply.github.com"
