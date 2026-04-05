@@ -193,23 +193,17 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gpg debhelper devscripts dput
+          sudo apt-get install -y debhelper devscripts dput
 
       - name: Import GPG key
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
-        run: |
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
-          echo "use-agent" >> ~/.gnupg/gpg.conf
-          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
-          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-          echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
-          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
-          GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
-          echo "GPG_KEY_ID=${GPG_KEY_ID}" >> "$GITHUB_ENV"
-          export GPG_TTY=$(tty) || true
+        uses: crazy-max/ghaction-import-gpg@v7
+        with:
+          gpg_private_key: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PPA_GPG_PASSPHRASE }}
+        id: import_gpg
+
+      - name: Set GPG key ID
+        run: echo "GPG_KEY_ID=${{ steps.import_gpg.outputs.keyid }}" >> "$GITHUB_ENV"
 
       - name: Build and upload for each series
         run: |
@@ -251,12 +245,8 @@ jobs:
             # Build unsigned source package
             dpkg-buildpackage -S -sa -d -us -uc
 
-            # Sign with GPG in non-interactive mode
-            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --detach-sign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
-            mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            # Sign with debsign
+            debsign -k"${GPG_KEY_ID}" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
             # Upload to PPA
             cd "${WORKDIR}"
