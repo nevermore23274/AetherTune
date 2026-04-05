@@ -6,6 +6,7 @@ A terminal-based internet radio player with real-time audio visualization, built
 ![License](https://img.shields.io/badge/license-MIT-blue)
 [![Release](https://github.com/nevermore23274/AetherTune/actions/workflows/release.yml/badge.svg)](https://github.com/nevermore23274/AetherTune/actions/workflows/release.yml)
 [![AUR](https://img.shields.io/aur/version/aethertune-bin)](https://aur.archlinux.org/packages/aethertune-bin)
+[![PPA](https://img.shields.io/badge/PPA-patchgoblin%2Faethertune-orange)](https://launchpad.net/~patchgoblin/+archive/ubuntu/aethertune)
 
 ## Overview
 
@@ -61,6 +62,19 @@ paru -S aethertune-bin
 Or with yay: `yay -S aethertune-bin`
 
 Dependencies (`mpv`, `libpulse`) are installed automatically. For real-time audio visualization, you also need `pipewire-pulse` or `pulseaudio` (one is likely already installed).
+
+</details>
+
+<details>
+<summary><b>Linux — Ubuntu/Debian (PPA)</b></summary>
+
+```bash
+sudo add-apt-repository ppa:patchgoblin/aethertune
+sudo apt update
+sudo apt install aethertune
+```
+
+Currently available for Ubuntu Noble (24.04). Dependencies (`mpv`, `libpulse0`) are installed automatically. For real-time audio visualization, you also need `pipewire-pulse` or `pulseaudio`.
 
 </details>
 
