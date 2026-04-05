@@ -202,8 +202,10 @@ jobs:
           passphrase: ${{ secrets.PPA_GPG_PASSPHRASE }}
         id: import_gpg
 
-      - name: Set GPG key ID
-        run: echo "GPG_KEY_ID=${{ steps.import_gpg.outputs.keyid }}" >> "$GITHUB_ENV"
+      - name: Set GPG fingerprint
+        run: |
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep fpr | head -1 | cut -d: -f10)
+          echo "GPG_FINGERPRINT=${FINGERPRINT}" >> "$GITHUB_ENV"
 
       - name: Build and upload for each series
         run: |
@@ -242,11 +244,8 @@ jobs:
           CHLOG
             sed -i 's/^          //' debian/changelog
 
-            # Build unsigned source package
-            dpkg-buildpackage -S -sa -d -us -uc
-
-            # Sign with debsign
-            debsign -k"${GPG_KEY_ID}" -p"gpg --no-tty" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            # Build and sign source package in one step
+            dpkg-buildpackage -S -sa -d -k"${GPG_FINGERPRINT}"
 
             # Upload to PPA
             cd "${WORKDIR}"
