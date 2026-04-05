@@ -7,6 +7,9 @@ use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+
 #[cfg(unix)]
 use crate::audio::pipe as audio_pipe;
 use crate::audio::pipe::SharedAnalysis;
@@ -89,6 +92,9 @@ pub struct Player {
     has_parec: bool,
     /// Real-time stream information from mpv
     pub stream_info: StreamInfo,
+    /// Windows Job Object handle — kills mpv automatically if AetherTune is closed via X button
+    #[cfg(windows)]
+    job_handle: Option<windows_sys::Win32::Foundation::HANDLE>,
 }
 
 impl Player {
@@ -107,6 +113,9 @@ impl Player {
         #[cfg(windows)]
         let has_parec = false;
 
+        #[cfg(windows)]
+        let job_handle = create_kill_on_close_job();
+
         Self {
             process: None,
             #[cfg(unix)]
@@ -124,6 +133,8 @@ impl Player {
             request_counter: 0,
             has_parec,
             stream_info: StreamInfo::new(),
+            #[cfg(windows)]
+            job_handle,
         }
     }
 
@@ -154,6 +165,15 @@ impl Player {
 
         match cmd.spawn() {
             Ok(c) => {
+                // On Windows, assign mpv to our Job Object so it gets killed
+                // automatically if the terminal window is closed via the X button.
+                #[cfg(windows)]
+                {
+                    if let Some(job) = self.job_handle {
+                        assign_process_to_job(job, c.as_raw_handle());
+                    }
+                }
+
                 self.process = Some(c);
                 self.media_title = None;
                 self.stream_info.reset();
@@ -499,10 +519,61 @@ impl Player {
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop();
+
+        #[cfg(windows)]
+        {
+            if let Some(job) = self.job_handle.take() {
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
+            }
+        }
     }
 }
 
 #[cfg(unix)]
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Create a Windows Job Object configured to kill all assigned processes
+/// when the last handle to the job is closed (i.e. when AetherTune exits).
+#[cfg(windows)]
+fn create_kill_on_close_job() -> Option<windows_sys::Win32::Foundation::HANDLE> {
+    use windows_sys::Win32::System::JobObjects::*;
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job == 0 {
+            return None;
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+
+        if ok == 0 {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return None;
+        }
+
+        Some(job)
+    }
+}
+
+/// Assign a spawned process to a Job Object so it inherits the kill-on-close behavior.
+#[cfg(windows)]
+fn assign_process_to_job(
+    job: windows_sys::Win32::Foundation::HANDLE,
+    process: std::os::windows::io::RawHandle,
+) {
+    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+    unsafe {
+        AssignProcessToJobObject(job, process as isize);
+    }
 }
