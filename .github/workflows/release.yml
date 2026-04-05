@@ -251,11 +251,11 @@ jobs:
             # Build unsigned source package
             dpkg-buildpackage -S -sa -d -us -uc
 
-            # Sign with dpkg-sig approach
-            gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase "" --default-key "${GPG_KEY_ID}" --detach-sign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase "" --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
+            # Sign with GPG in non-interactive mode
+            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --detach-sign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
+            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
             mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}.dsc"
-            gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase "" --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            echo "" | gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase-fd 0 --default-key "${GPG_KEY_ID}" --clearsign "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
             mv "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes.asc" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
             # Upload to PPA
