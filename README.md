@@ -80,6 +80,51 @@ Replace `VERSION` with the actual tag (e.g. `v0.3.0`). You'll need `mpv` and `pa
 </details>
 
 <details>
+<summary><b>Nix / Flakes</b></summary>
+
+If you use Nix with flakes enabled:
+
+```bash
+# Run directly
+nix run github:nevermore23274/AetherTune
+```
+
+You can also add AetherTune as a flake input in your own `flake.nix`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    AetherTune.url = "github:nevermore23274/AetherTune";
+  };
+
+  outputs =
+    inputs@{
+      self,
+      flake-utils,
+      nixpkgs,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+        };
+      in
+      {
+        devShells.default = pkgs.mkShell {
+          packages = [ inputs.AetherTune.packages.${system}.aethertune ];
+        };
+      }
+    );
+}
+```
+
+</details>
+
+<details>
 <summary><b>Linux — From source</b></summary>
 
 Requires Rust 1.85+ and system dependencies (`mpv`, `pulseaudio-utils` or `pipewire-pulse`).
@@ -127,23 +172,23 @@ aethertune --boot-speed=fast
 
 Below is a list of keyboard shortcuts. Press `?` in the app to see them as well (`Esc` closes the overlay).
 
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` or `j` / `k` | Navigate station list |
-| `Enter` | Play selected station |
-| `s` | Stop playback |
-| `+` / `-` | Volume up / down |
-| `/` | Search stations |
-| `f` | Toggle favorite |
-| `i` | Station details overlay |
-| `n` | Load more stations |
-| `Tab` | Cycle panel (Stations / Favorites / History) |
-| `[` / `]` | Cycle genre category |
-| `Shift+Tab` | Cycle genre category (backward) |
-| `?` | Help overlay |
-| `` ` `` | Performance profiler |
-| `<` / `>` | Adjust tick rate (when profiler is open) |
-| `q` | Quit |
+| Key                    | Action                                       |
+| ---------------------- | -------------------------------------------- |
+| `↑` / `↓` or `j` / `k` | Navigate station list                        |
+| `Enter`                | Play selected station                        |
+| `s`                    | Stop playback                                |
+| `+` / `-`              | Volume up / down                             |
+| `/`                    | Search stations                              |
+| `f`                    | Toggle favorite                              |
+| `i`                    | Station details overlay                      |
+| `n`                    | Load more stations                           |
+| `Tab`                  | Cycle panel (Stations / Favorites / History) |
+| `[` / `]`              | Cycle genre category                         |
+| `Shift+Tab`            | Cycle genre category (backward)              |
+| `?`                    | Help overlay                                 |
+| `` ` ``                | Performance profiler                         |
+| `<` / `>`              | Adjust tick rate (when profiler is open)     |
+| `q`                    | Quit                                         |
 
 ## Settings
 

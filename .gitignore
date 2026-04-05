@@ -1,6 +1,5 @@
 # Rust build artifacts
 /target/
-Cargo.lock
 
 # Editor files
 *.swp
@@ -16,3 +15,9 @@ Thumbs.db
 
 # Runtime files
 /tmp/
+
+# Nix
+.direnv/
+.envrc
+/result
+/result-*
