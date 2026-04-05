@@ -246,7 +246,7 @@ jobs:
             dpkg-buildpackage -S -sa -d -us -uc
 
             # Sign with debsign
-            debsign -k"${GPG_KEY_ID}" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            debsign -k"${GPG_KEY_ID}" -p"gpg --no-tty" "${WORKDIR}/aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
             # Upload to PPA
             cd "${WORKDIR}"
