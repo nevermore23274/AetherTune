@@ -213,6 +213,7 @@ jobs:
           TAG="${{ needs.build-linux.outputs.tag }}"
 
           # Extract the release tarball to get the binary
+          STARTDIR="$(pwd)"
           tar xzf "artifacts/AetherTune-${TAG}-linux-x86_64.tar.gz"
 
           for SERIES in noble jammy; do
@@ -251,5 +252,5 @@ jobs:
             cd "${WORKDIR}"
             dput ppa:patchgoblin/aethertune "aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
 
-            cd /tmp
+            cd "${STARTDIR}"
           done
