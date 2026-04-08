@@ -13,7 +13,7 @@ A terminal-based internet radio player with real-time audio visualization, built
 
 AetherTune is a TUI (terminal user interface) application that lets you browse, search, and stream internet radio stations directly from your terminal. It features a real-time spectrum visualizer driven by actual audio analysis, a rolling song log that captures ICY metadata, and live stream health monitoring.
 
-[▶ Watch the demo](https://github.com/nevermore23274/AetherTune/raw/main/img/Showcase.mp4)
+![AetherTune](img/showcase.gif)
 
 ### Features
 
