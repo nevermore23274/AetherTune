@@ -7,33 +7,13 @@ A terminal-based internet radio player with real-time audio visualization, built
 [![Release](https://github.com/nevermore23274/AetherTune/actions/workflows/release.yml/badge.svg)](https://github.com/nevermore23274/AetherTune/actions/workflows/release.yml)
 [![AUR](https://img.shields.io/aur/version/aethertune-bin)](https://aur.archlinux.org/packages/aethertune-bin)
 [![PPA](https://img.shields.io/badge/PPA-patchgoblin%2Faethertune-orange)](https://launchpad.net/~patchgoblin/+archive/ubuntu/aethertune)
+[![Homebrew](https://img.shields.io/badge/brew-nevermore23274%2Faethertune-yellow)](https://github.com/nevermore23274/homebrew-aethertune)
 
 ## Overview
 
 AetherTune is a TUI (terminal user interface) application that lets you browse, search, and stream internet radio stations directly from your terminal. It features a real-time spectrum visualizer driven by actual audio analysis, a rolling song log that captures ICY metadata, and live stream health monitoring.
 
-![AetherTune](img/screenshot.png)
-
-## Requirements
-
-- **Rust** 1.85+ (edition 2024)
-- **mpv** — audio playback backend
-- **PulseAudio or PipeWire** (with PulseAudio compatibility) — for real audio visualization
-  - `parec` must be available in `$PATH` (provided by `pulseaudio-utils` or `pipewire-pulse`)
-- **Linux** — uses Unix domain sockets for mpv IPC, POSIX FIFOs for audio capture, and `libc` for process group management
-
-### System dependencies (Debian/Ubuntu)
-
-```bash
-sudo apt install mpv pulseaudio-utils
-```
-
-### System dependencies (Arch)
-
-```bash
-sudo pacman -S mpv pipewire-pulse
-# or: sudo pacman -S mpv pulseaudio
-```
+<video src="img/Showcase.mp4" autoplay loop muted playsinline></video>
 
 ### Features
 
@@ -79,6 +59,18 @@ Currently available for Ubuntu Noble (24.04). Dependencies (`mpv`, `libpulse0`) 
 </details>
 
 <details>
+<summary><b>Linux — Homebrew</b></summary>
+
+```bash
+brew tap nevermore23274/aethertune
+brew install aethertune
+```
+
+You'll also need `mpv` and `pulseaudio-utils` (or `pipewire-pulse`) installed on your system for playback and real-time audio visualization.
+
+</details>
+
+<details>
 <summary><b>Linux — Prebuilt binary</b></summary>
 
 Download the latest `.tar.gz` from the [Releases page](https://github.com/nevermore23274/AetherTune/releases):
@@ -89,7 +81,7 @@ tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
 ./AetherTune-VERSION-linux-x86_64/AetherTune
 ```
 
-Replace `VERSION` with the actual tag (e.g. `v0.3.0`). You'll need `mpv` and `parec` installed on your system.
+Replace `VERSION` with the actual tag (e.g. `v0.5.1`). You'll need `mpv` and `parec` installed on your system.
 
 </details>
 
