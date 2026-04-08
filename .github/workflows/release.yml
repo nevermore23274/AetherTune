@@ -254,3 +254,66 @@ jobs:
 
             cd "${STARTDIR}"
           done
+
+  brew:
+    name: Update Homebrew Tap
+    needs: [build-linux, release]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ needs.build-linux.outputs.version }}"
+          TAG="${{ needs.build-linux.outputs.tag }}"
+          SHA256="${{ needs.build-linux.outputs.sha256 }}"
+
+          mkdir -p tap
+          cd tap
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/nevermore23274/homebrew-aethertune.git .
+          mkdir -p Formula
+
+          cat > Formula/aethertune.rb <<'FORMULA'
+          class Aethertune < Formula
+            desc "Terminal-based internet radio player with real-time audio visualization, built in Rust"
+            homepage "https://github.com/nevermore23274/AetherTune"
+            url "RELEASE_URL"
+            sha256 "RELEASE_SHA256"
+            license "MIT"
+            version "RELEASE_VERSION"
+
+            depends_on :linux
+
+            def install
+              bin.install "AetherTune" => "aethertune"
+            end
+
+            def caveats
+              <<~EOS
+                AetherTune requires mpv and PulseAudio/PipeWire for full functionality:
+
+                  sudo apt install mpv pulseaudio-utils    # Debian/Ubuntu
+                  sudo pacman -S mpv pipewire-pulse        # Arch
+
+                Without parec, the visualizer falls back to simulated mode.
+              EOS
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/aethertune --version 2>&1", 2)
+            end
+          end
+          FORMULA
+
+          sed -i 's/^          //' Formula/aethertune.rb
+          sed -i "s|RELEASE_URL|https://github.com/nevermore23274/AetherTune/releases/download/${TAG}/AetherTune-${TAG}-linux-x86_64.tar.gz|" Formula/aethertune.rb
+          sed -i "s|RELEASE_SHA256|${SHA256}|" Formula/aethertune.rb
+          sed -i "s|RELEASE_VERSION|${VERSION}|" Formula/aethertune.rb
+
+          git config user.name "sineyed"
+          git config user.email "sineyed@users.noreply.github.com"
+          git add Formula/aethertune.rb
+          git diff --cached --quiet || git commit -m "Update to v${VERSION}"
+          git push

@@ -540,20 +540,31 @@ fn shell_escape(s: &str) -> String {
 fn create_kill_on_close_job() -> Option<windows_sys::Win32::Foundation::HANDLE> {
     use windows_sys::Win32::System::JobObjects::*;
 
+    // Define locally to avoid needing extra windows-sys feature flags for IO_COUNTERS
+    #[repr(C)]
+    struct ExtendedLimitInfo {
+        basic: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        io_info: [u8; 48], // IO_COUNTERS padding
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job == 0 {
+        if job.is_null() {
             return None;
         }
 
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let mut info: ExtendedLimitInfo = std::mem::zeroed();
+        info.basic.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
         let ok = SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
             &info as *const _ as *const _,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            std::mem::size_of::<ExtendedLimitInfo>() as u32,
         );
 
         if ok == 0 {
@@ -574,6 +585,6 @@ fn assign_process_to_job(
     use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
 
     unsafe {
-        AssignProcessToJobObject(job, process as isize);
+        AssignProcessToJobObject(job, process as *mut std::ffi::c_void);
     }
 }
