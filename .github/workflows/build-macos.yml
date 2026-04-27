@@ -1,0 +1,46 @@
+name: Build macOS
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build macOS (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: strip target/${{ matrix.target }}/release/AetherTune
+
+      - name: Package binary
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p "AetherTune-${TAG}-macos-${{ matrix.arch }}"
+          cp target/${{ matrix.target }}/release/AetherTune "AetherTune-${TAG}-macos-${{ matrix.arch }}/"
+          cp README.md LICENSE "AetherTune-${TAG}-macos-${{ matrix.arch }}/"
+          tar czf "AetherTune-${TAG}-macos-${{ matrix.arch }}.tar.gz" "AetherTune-${TAG}-macos-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-${{ matrix.arch }}
+          path: AetherTune-*.tar.gz

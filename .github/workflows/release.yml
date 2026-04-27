@@ -15,9 +15,12 @@ jobs:
   build-windows:
     uses: ./.github/workflows/build-windows.yml
 
+  build-macos:
+    uses: ./.github/workflows/build-macos.yml
+
   release:
     name: Create GitHub Release
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
 
     steps:

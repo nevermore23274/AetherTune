@@ -60,14 +60,39 @@ Currently available for Ubuntu Noble (24.04). Dependencies (`mpv`, `libpulse0`) 
 </details>
 
 <details>
-<summary><b>Linux — Homebrew</b></summary>
+<summary><b>Linux / macOS — Homebrew</b></summary>
 
 ```bash
 brew tap nevermore23274/aethertune
 brew install aethertune
 ```
 
-You'll also need `mpv` and `pulseaudio-utils` (or `pipewire-pulse`) installed on your system for playback and real-time audio visualization.
+You'll also need `mpv` installed on your system (`brew install mpv`). On Linux, you'll additionally need `pulseaudio-utils` (or `pipewire-pulse`) for real-time audio visualization.
+
+> **macOS note:** Audio visualization uses a simulated mode (no real-time audio capture yet). Playback, station browsing, favorites, and all other features work normally.
+
+</details>
+
+<details>
+<summary><b>macOS — Prebuilt binary</b></summary>
+
+Download the latest `.tar.gz` for your architecture from the [Releases page](https://github.com/nevermore23274/AetherTune/releases):
+
+```bash
+# Apple Silicon (M1/M2/M3/M4)
+curl -LO https://github.com/nevermore23274/AetherTune/releases/download/VERSION/AetherTune-VERSION-macos-aarch64.tar.gz
+tar xzf AetherTune-VERSION-macos-aarch64.tar.gz
+./AetherTune-VERSION-macos-aarch64/AetherTune
+
+# Intel
+curl -LO https://github.com/nevermore23274/AetherTune/releases/download/VERSION/AetherTune-VERSION-macos-x86_64.tar.gz
+tar xzf AetherTune-VERSION-macos-x86_64.tar.gz
+./AetherTune-VERSION-macos-x86_64/AetherTune
+```
+
+Replace `VERSION` with the actual tag (e.g. `v0.7.0`). You'll need `mpv` installed on your system (`brew install mpv`).
+
+> **macOS note:** Audio visualization uses a simulated mode. Playback and all other features work normally.
 
 </details>
 
@@ -114,9 +139,9 @@ home.packages = [ inputs.AetherTune.packages.${system}.aethertune ];
 </details>
 
 <details>
-<summary><b>Linux — From source</b></summary>
+<summary><b>Linux / macOS — From source</b></summary>
 
-Requires Rust 1.85+ and system dependencies (`mpv`, `pulseaudio-utils` or `pipewire-pulse`).
+Requires Rust 1.85+ and `mpv`. On Linux, you'll also need `pulseaudio-utils` or `pipewire-pulse` for real-time audio visualization.
 
 ```bash
 git clone https://github.com/nevermore23274/aethertune.git
