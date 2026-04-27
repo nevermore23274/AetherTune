@@ -1,7 +1,7 @@
 use crate::audio::pipe::{self as audio_pipe, SharedAnalysis};
 use crate::audio::player::Player;
 use crate::audio::visualizer::Visualizer;
-use crate::storage::config::Config;
+use crate::storage::config::{Config, KeyBindings};
 use crate::storage::favorites::FavoritesStore;
 use crate::storage::history::HistoryStore;
 
@@ -23,6 +23,7 @@ pub enum Overlay {
     None,
     Help,
     StationDetail,
+    Settings,
 }
 
 /// Lightweight per-frame performance counters.
@@ -224,6 +225,13 @@ pub struct App {
     pub tick_rate_ms: u64,
     /// Country code for blended local/global station discovery (from config)
     pub country_code: String,
+    /// Remappable keybindings (persisted to config)
+    pub keybindings: KeyBindings,
+    /// Currently selected action index in settings overlay
+    pub settings_selected: usize,
+    /// When true, the settings overlay is waiting for a keypress to rebind
+    /// The tuple is (action_index, is_alt_slot)
+    pub settings_awaiting_key: Option<(usize, bool)>,
 }
 
 #[derive(Clone)]
@@ -302,7 +310,10 @@ impl App {
             perf: PerfStats::new(),
             show_perf: false,
             tick_rate_ms: config.tick_rate_ms,
-            country_code: config.country_code,
+            country_code: config.country_code.clone(),
+            keybindings: config.keybindings,
+            settings_selected: 0,
+            settings_awaiting_key: None,
         }
     }
 
@@ -439,11 +450,12 @@ impl App {
         self.save_config();
     }
 
-    /// Persist current tick rate and volume to config file
+    /// Persist current tick rate, volume, and keybindings to config file
     pub fn save_config(&self) {
         let mut config = Config::load();
         config.tick_rate_ms = self.tick_rate_ms;
         config.volume = self.volume;
+        config.keybindings = self.keybindings.clone();
         config.save();
     }
 

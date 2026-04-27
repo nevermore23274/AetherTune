@@ -45,6 +45,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
         let cat = app.categories[app.category_index];
 
+        use crate::storage::config::keycode_to_string;
+        let search_key = keycode_to_string(app.keybindings.search.primary);
+        let help_key = keycode_to_string(app.keybindings.help.primary);
+        let settings_key = keycode_to_string(app.keybindings.settings.primary);
+
         let line = Line::from(vec![
             Span::styled(" ", Style::default()),
             playing_indicator,
@@ -53,7 +58,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(CYAN),
             ),
             Span::styled(
-                "  │  / search  │  ? help",
+                format!("  │  {} search  │  {} help  │  {} settings", search_key, help_key, settings_key),
                 Style::default().fg(Color::Rgb(80, 80, 110)),
             ),
         ]);

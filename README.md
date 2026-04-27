@@ -23,6 +23,7 @@ AetherTune is a TUI (terminal user interface) application that lets you browse, 
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
+- **Customizable keybindings** — remap every keyboard shortcut from the in-app settings overlay, persisted to your config
 - **Built-in profiler** — per-frame timing breakdown for performance tuning
 - **Fallback mode** — simulated visualizer when PulseAudio capture isn't available
 
@@ -81,51 +82,33 @@ tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
 ./AetherTune-VERSION-linux-x86_64/AetherTune
 ```
 
-Replace `VERSION` with the actual tag (e.g. `v0.5.1`). You'll need `mpv` and `parec` installed on your system.
+Replace `VERSION` with the actual tag (e.g. `v0.6.0`). You'll need `mpv` and `parec` installed on your system.
 
 </details>
 
 <details>
 <summary><b>Nix / Flakes</b></summary>
 
-If you use Nix with flakes enabled:
+If you use Nix with flakes enabled, you can run AetherTune directly:
 
 ```bash
-# Run directly
 nix run github:nevermore23274/AetherTune
 ```
 
-You can also add AetherTune as a flake input in your own `flake.nix`:
+To install permanently, add the flake input to your `flake.nix`:
 
 ```nix
-{
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    AetherTune.url = "github:nevermore23274/AetherTune";
-  };
+inputs.AetherTune.url = "github:nevermore23274/AetherTune";
+```
 
-  outputs =
-    inputs@{
-      self,
-      flake-utils,
-      nixpkgs,
-      ...
-    }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-        };
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          packages = [ inputs.AetherTune.packages.${system}.aethertune ];
-        };
-      }
-    );
-}
+Then add the package to your system or user packages:
+
+```nix
+# NixOS (configuration.nix)
+environment.systemPackages = [ inputs.AetherTune.packages.${system}.aethertune ];
+
+# Home Manager
+home.packages = [ inputs.AetherTune.packages.${system}.aethertune ];
 ```
 
 </details>
@@ -176,7 +159,7 @@ aethertune --boot-speed=fast
 
 ## Keybindings
 
-Below is a list of keyboard shortcuts. Press `?` in the app to see them as well (`Esc` closes the overlay).
+Below is a list of default keyboard shortcuts. Press `?` in the app to see them (`Esc` closes the overlay). All keybindings can be remapped — see [Keybindings](#keybindings-1) under Settings.
 
 | Key                    | Action                                       |
 | ---------------------- | -------------------------------------------- |
@@ -192,13 +175,14 @@ Below is a list of keyboard shortcuts. Press `?` in the app to see them as well 
 | `[` / `]`              | Cycle genre category                         |
 | `Shift+Tab`            | Cycle genre category (backward)              |
 | `?`                    | Help overlay                                 |
+| `S`                    | Keybinding settings overlay                  |
 | `` ` ``                | Performance profiler                         |
 | `<` / `>`              | Adjust tick rate (when profiler is open)     |
 | `q`                    | Quit                                         |
 
 ## Settings
 
-AetherTune has a settings screen accessible from the launch menu. Settings are persisted to `~/.aethertune/config.json`.
+AetherTune has a settings screen accessible from the launch menu, and a keybinding settings overlay accessible during playback. Settings are persisted to `~/.aethertune/config.json`.
 
 ### Country Code
 
@@ -208,13 +192,32 @@ To configure: launch AetherTune → select **Settings** from the menu → type y
 
 Leave the country code empty (backspace to clear) for pure global results — this is the default.
 
-You can also edit the config file directly:
+### Keybindings
+
+Every keyboard shortcut can be remapped. Press `S` during normal playback to open the keybinding settings overlay.
+
+In the overlay:
+- **↑/↓** — navigate the action list
+- **Enter** — rebind the primary key (press any key to assign)
+- **a** — rebind the alternate key
+- **d** — clear the alternate key
+- **r** — reset a single action to its default
+- **R** — reset all keybindings to defaults
+- **Esc** or **S** — close the overlay
+
+Each action supports a primary key and an optional alternate key. Changes are saved immediately to `config.json` and the help overlay (`?`) always reflects your current bindings. The header bar hints also update dynamically.
+
+Only non-default keybindings are written to the config file to keep it clean. A fresh config with customized bindings looks like:
 
 ```json
 {
   "tick_rate_ms": 30,
   "volume": 50,
-  "country_code": "US"
+  "country_code": "US",
+  "keybindings": {
+      "quit": ["x"],
+      "search": ["Space"]
+  }
 }
 ```
 
@@ -229,7 +232,7 @@ src/
 │   ├── pipe.rs               FIFO creation, PCM reader thread, radix-2 FFT analysis
 │   └── visualizer.rs         Bar animation (real + simulated modes)
 ├── storage/
-│   ├── config.rs             User preferences (tick rate, volume, country code)
+│   ├── config.rs             User preferences (tick rate, volume, country code, keybindings)
 │   ├── favorites.rs          JSON persistence for favorites
 │   └── history.rs            JSON persistence for play history
 └── ui/
@@ -244,6 +247,7 @@ src/
     ├── stream_info.rs        Live stream health panel
     ├── media_browser.rs      Media source switcher (Radio/Subsonic stub)
     ├── overlays.rs           Help + station detail popups
+    ├── settings.rs           Keybinding settings overlay
     ├── shutdown.rs           CRT power-off animation on quit
     └── perf_overlay.rs       Built-in performance profiler
 ```
@@ -262,7 +266,7 @@ Process isolation is handled carefully: `parec` runs in its own process group vi
 
 ### Data persistence
 
-Favorites, history, and user preferences (tick rate, volume, country code) are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate are saved automatically when adjusted and restored on next launch. The country code is configured via the Settings screen in the launch menu.
+Favorites, history, and user preferences (tick rate, volume, country code, keybindings) are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate and keybindings are saved automatically when adjusted and restored on next launch. The country code is configured via the Settings screen in the launch menu. Only non-default keybindings are persisted to keep the config file clean.
 
 ## License
 

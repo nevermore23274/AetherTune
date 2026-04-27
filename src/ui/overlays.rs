@@ -1,4 +1,5 @@
 use crate::app::{ActivePanel, App};
+use crate::storage::config::binding_display;
 use super::helpers::*;
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -8,31 +9,36 @@ use ratatui::{
     layout::Rect,
 };
 
-pub fn draw_help(f: &mut Frame, area: Rect) {
+pub fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let popup = centered_rect(60, 70, area);
     f.render_widget(Clear, popup);
 
+    let kb = &app.keybindings;
     let help_text = vec![
         Line::from(Span::styled(
             "⌨  Keybindings",
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        help_line("↑/↓ or j/k", "Navigate station list"),
-        help_line("Enter", "Play selected station"),
-        help_line("s", "Stop playback"),
-        help_line("+ / -", "Volume up / down"),
-        help_line("/", "Search stations"),
-        help_line("f", "Toggle favorite"),
-        help_line("i", "Station details"),
-        help_line("n", "Load more stations"),
-        help_line("Tab", "Cycle panel (Stations/Favorites/History)"),
-        help_line("[ / ]", "Cycle genre category"),
-        help_line("Shift+Tab", "Cycle genre category (backward)"),
-        help_line("?", "Toggle this help"),
-        help_line("`", "Performance profiler"),
-        help_line("< / >", "Adjust tick rate (profiler open)"),
-        help_line("q", "Quit"),
+        help_line(&binding_display(&kb.navigate_up), "Navigate up"),
+        help_line(&binding_display(&kb.navigate_down), "Navigate down"),
+        help_line(&binding_display(&kb.play), "Play selected station"),
+        help_line(&binding_display(&kb.stop), "Stop playback"),
+        help_line(&binding_display(&kb.volume_up), "Volume up"),
+        help_line(&binding_display(&kb.volume_down), "Volume down"),
+        help_line(&binding_display(&kb.search), "Search stations"),
+        help_line(&binding_display(&kb.toggle_favorite), "Toggle favorite"),
+        help_line(&binding_display(&kb.station_detail), "Station details"),
+        help_line(&binding_display(&kb.load_more), "Load more stations"),
+        help_line(&binding_display(&kb.cycle_panel), "Cycle panel"),
+        help_line(&binding_display(&kb.genre_next), "Next genre"),
+        help_line(&binding_display(&kb.genre_prev), "Previous genre"),
+        help_line(&binding_display(&kb.help), "Toggle this help"),
+        help_line(&binding_display(&kb.perf_toggle), "Performance profiler"),
+        help_line(&binding_display(&kb.perf_tick_slower), "Tick rate slower (profiler)"),
+        help_line(&binding_display(&kb.perf_tick_faster), "Tick rate faster (profiler)"),
+        help_line(&binding_display(&kb.settings), "Keybinding settings"),
+        help_line(&binding_display(&kb.quit), "Quit"),
         Line::from(""),
         Line::from(Span::styled(
             "Press ? or Esc to close",

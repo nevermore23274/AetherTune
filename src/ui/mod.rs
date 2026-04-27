@@ -5,6 +5,7 @@ pub mod media_browser;
 pub mod now_playing;
 pub mod overlays;
 pub mod perf_overlay;
+pub mod settings;
 pub mod shutdown;
 pub mod song_log;
 pub mod station_list;
@@ -43,8 +44,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     // ── Overlays ───────────────────────────────────────────────────
     match &app.overlay {
-        Overlay::Help => overlays::draw_help(f, size),
+        Overlay::Help => overlays::draw_help(f, app, size),
         Overlay::StationDetail => overlays::draw_detail(f, app, size),
+        Overlay::Settings => settings::draw(f, app, size),
         Overlay::None => {}
     }
 

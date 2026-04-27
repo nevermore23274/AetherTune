@@ -9,6 +9,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use storage::config::KeyBindings;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
@@ -135,10 +136,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 match app.input_mode {
                     InputMode::Normal => {
-                        // Handle overlays first
+                        // ── Settings overlay has its own input handling ──
+                        if app.overlay == Overlay::Settings {
+                            // If awaiting a key for rebinding
+                            if let Some((action_idx, is_alt)) = app.settings_awaiting_key {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        // Cancel the rebind
+                                        app.settings_awaiting_key = None;
+                                    }
+                                    new_key => {
+                                        if let Some(json_key) = app.keybindings.key_at_index(action_idx) {
+                                            let json_key = json_key.to_string();
+                                            if is_alt {
+                                                // Set alt, keep primary
+                                                let actions = app.keybindings.all_actions();
+                                                let primary = actions[action_idx].2.primary;
+                                                app.keybindings.set_binding(&json_key, primary, Some(new_key));
+                                            } else {
+                                                // Set primary, keep alt
+                                                let actions = app.keybindings.all_actions();
+                                                let alt = actions[action_idx].2.alt;
+                                                app.keybindings.set_binding(&json_key, new_key, alt);
+                                            }
+                                            app.save_config();
+                                        }
+                                        app.settings_awaiting_key = None;
+                                    }
+                                }
+                            } else {
+                                // Normal settings navigation
+                                match key.code {
+                                    KeyCode::Esc | KeyCode::Char('S') => {
+                                        app.overlay = Overlay::None;
+                                    }
+                                    KeyCode::Up | KeyCode::Char('k') => {
+                                        if app.settings_selected > 0 {
+                                            app.settings_selected -= 1;
+                                        }
+                                    }
+                                    KeyCode::Down | KeyCode::Char('j') => {
+                                        let count = app.keybindings.all_actions().len();
+                                        if app.settings_selected < count - 1 {
+                                            app.settings_selected += 1;
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        // Start rebinding primary key
+                                        app.settings_awaiting_key = Some((app.settings_selected, false));
+                                    }
+                                    KeyCode::Char('a') => {
+                                        // Start rebinding alt key
+                                        app.settings_awaiting_key = Some((app.settings_selected, true));
+                                    }
+                                    KeyCode::Char('d') => {
+                                        // Clear the alt binding
+                                        if let Some(json_key) = app.keybindings.key_at_index(app.settings_selected) {
+                                            let json_key = json_key.to_string();
+                                            let actions = app.keybindings.all_actions();
+                                            let primary = actions[app.settings_selected].2.primary;
+                                            app.keybindings.set_binding(&json_key, primary, None);
+                                            app.save_config();
+                                        }
+                                    }
+                                    KeyCode::Char('r') => {
+                                        // Reset this action to default
+                                        let defaults = KeyBindings::default();
+                                        let default_actions = defaults.all_actions();
+                                        if let Some((json_key, _, def_binding)) = default_actions.get(app.settings_selected) {
+                                            let json_key = json_key.to_string();
+                                            app.keybindings.set_binding(&json_key, def_binding.primary, def_binding.alt);
+                                            app.save_config();
+                                        }
+                                    }
+                                    KeyCode::Char('R') => {
+                                        // Reset ALL to defaults
+                                        app.keybindings = KeyBindings::default();
+                                        app.save_config();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Handle other overlays (help, detail)
                         if app.overlay != Overlay::None {
                             match key.code {
-                                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('i') => {
+                                KeyCode::Esc => {
+                                    app.overlay = Overlay::None;
+                                }
+                                _ if app.keybindings.help.matches(key.code) => {
+                                    app.overlay = Overlay::None;
+                                }
+                                _ if app.keybindings.station_detail.matches(key.code) => {
                                     app.overlay = Overlay::None;
                                 }
                                 _ => {}
@@ -146,58 +237,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             continue;
                         }
 
-                        match key.code {
-                            KeyCode::Char('q') => break,
-                            KeyCode::Char('?') => {
-                                app.overlay = Overlay::Help;
-                            }
-                            KeyCode::Char('i') => {
-                                app.overlay = Overlay::StationDetail;
-                            }
-                            KeyCode::Char('/') => {
-                                app.search_query.clear();
-                                app.input_mode = InputMode::Editing;
-                            }
-                            KeyCode::Char('s') => app.stop(),
-                            KeyCode::Char('f') => app.toggle_favorite(),
-                            KeyCode::Char('+') | KeyCode::Char('=') => app.set_volume(5),
-                            KeyCode::Char('-') => app.set_volume(-5),
-                            KeyCode::Down | KeyCode::Char('j') => app.next(),
-                            KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                            KeyCode::Enter => app.play(),
-                            KeyCode::Tab => {
-                                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                    app.switch_category().await?;
-                                } else {
-                                    app.cycle_panel();
-                                }
-                            }
-                            KeyCode::BackTab => {
-                                app.switch_category_back().await?;
-                            }
-                            KeyCode::Char('[') => {
-                                app.switch_category_back().await?;
-                            }
-                            KeyCode::Char(']') => {
+                        // ── Normal mode: use configured keybindings ──
+                        let kc = key.code;
+
+                        if app.keybindings.quit.matches(kc) {
+                            break;
+                        } else if app.keybindings.help.matches(kc) {
+                            app.overlay = Overlay::Help;
+                        } else if app.keybindings.station_detail.matches(kc) {
+                            app.overlay = Overlay::StationDetail;
+                        } else if app.keybindings.settings.matches(kc) {
+                            app.overlay = Overlay::Settings;
+                            app.settings_awaiting_key = None;
+                        } else if app.keybindings.search.matches(kc) {
+                            app.search_query.clear();
+                            app.input_mode = InputMode::Editing;
+                        } else if app.keybindings.stop.matches(kc) {
+                            app.stop();
+                        } else if app.keybindings.toggle_favorite.matches(kc) {
+                            app.toggle_favorite();
+                        } else if app.keybindings.volume_up.matches(kc) {
+                            app.set_volume(5);
+                        } else if app.keybindings.volume_down.matches(kc) {
+                            app.set_volume(-5);
+                        } else if app.keybindings.navigate_down.matches(kc) {
+                            app.next();
+                        } else if app.keybindings.navigate_up.matches(kc) {
+                            app.previous();
+                        } else if app.keybindings.play.matches(kc) {
+                            app.play();
+                        } else if app.keybindings.cycle_panel.matches(kc) {
+                            if key.modifiers.contains(KeyModifiers::SHIFT) {
                                 app.switch_category().await?;
+                            } else {
+                                app.cycle_panel();
                             }
-                            KeyCode::Char('n') => {
-                                app.load_more().await?;
-                            }
-                            // Perf overlay toggle
-                            KeyCode::Char('`') => {
-                                app.show_perf = !app.show_perf;
-                            }
-                            // Tick rate adjustment (only when perf overlay is shown)
-                            KeyCode::Char('<') | KeyCode::Char(',') if app.show_perf => {
-                                app.tick_rate_ms = (app.tick_rate_ms + 10).min(200);
-                                app.save_config();
-                            }
-                            KeyCode::Char('>') | KeyCode::Char('.') if app.show_perf => {
-                                app.tick_rate_ms = app.tick_rate_ms.saturating_sub(10).max(10);
-                                app.save_config();
-                            }
-                            _ => {}
+                        } else if kc == KeyCode::BackTab {
+                            app.switch_category_back().await?;
+                        } else if app.keybindings.genre_prev.matches(kc) {
+                            app.switch_category_back().await?;
+                        } else if app.keybindings.genre_next.matches(kc) {
+                            app.switch_category().await?;
+                        } else if app.keybindings.load_more.matches(kc) {
+                            app.load_more().await?;
+                        } else if app.keybindings.perf_toggle.matches(kc) {
+                            app.show_perf = !app.show_perf;
+                        } else if app.show_perf && app.keybindings.perf_tick_slower.matches(kc) {
+                            app.tick_rate_ms = (app.tick_rate_ms + 10).min(200);
+                            app.save_config();
+                        } else if app.show_perf && app.keybindings.perf_tick_faster.matches(kc) {
+                            app.tick_rate_ms = app.tick_rate_ms.saturating_sub(10).max(10);
+                            app.save_config();
                         }
                     }
                     InputMode::Editing => match key.code {

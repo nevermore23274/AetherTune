@@ -54,13 +54,13 @@ pub fn volume_line(volume: u32) -> Line<'static> {
     ])
 }
 
-pub fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
+pub fn help_line(key: &str, desc: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("  {:<14}", key),
             Style::default().fg(NEON_GREEN).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(desc, Style::default().fg(DIM_WHITE)),
+        Span::styled(desc.to_string(), Style::default().fg(DIM_WHITE)),
     ])
 }
 
