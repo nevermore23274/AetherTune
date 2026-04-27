@@ -1,0 +1,96 @@
+name: Publish PPA
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+    secrets:
+      PPA_GPG_PRIVATE_KEY:
+        required: true
+      PPA_GPG_PASSPHRASE:
+        required: true
+
+jobs:
+  ppa:
+    name: Update PPA Package
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: linux-x86_64
+          path: artifacts
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper devscripts dput
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v7
+        with:
+          gpg_private_key: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PPA_GPG_PASSPHRASE }}
+        id: import_gpg
+
+      - name: Set GPG fingerprint
+        run: |
+          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep fpr | head -1 | cut -d: -f10)
+          echo "GPG_FINGERPRINT=${FINGERPRINT}" >> "$GITHUB_ENV"
+
+      - name: Build and upload for each series
+        run: |
+          VERSION="${{ inputs.version }}"
+          TAG="${{ inputs.tag }}"
+
+          # Extract the release tarball to get the binary
+          STARTDIR="$(pwd)"
+          tar xzf "artifacts/AetherTune-${TAG}-linux-x86_64.tar.gz"
+
+          for SERIES in noble jammy; do
+            echo "=== Building for ${SERIES} ==="
+            WORKDIR="/tmp/${SERIES}"
+            mkdir -p "${WORKDIR}"
+
+            # Create source directory
+            mkdir -p "${WORKDIR}/aethertune-${VERSION}"
+            cp "AetherTune-${TAG}-linux-x86_64/AetherTune" "${WORKDIR}/aethertune-${VERSION}/aethertune"
+            cp "AetherTune-${TAG}-linux-x86_64/LICENSE" "${WORKDIR}/aethertune-${VERSION}/"
+            cp "AetherTune-${TAG}-linux-x86_64/README.md" "${WORKDIR}/aethertune-${VERSION}/"
+
+            # Create orig tarball
+            cd "${WORKDIR}"
+            tar czf "aethertune_${VERSION}.orig.tar.gz" "aethertune-${VERSION}"
+
+            # Copy debian directory
+            cp -r "${GITHUB_WORKSPACE}/debian" "aethertune-${VERSION}/debian"
+
+            # Update changelog for this series
+            cd "aethertune-${VERSION}"
+            cat > debian/changelog <<CHLOG
+          aethertune (${VERSION}-ppa1~${SERIES}) ${SERIES}; urgency=medium
+
+            * Release v${VERSION}
+
+           -- sineyed <sineyed@users.noreply.github.com>  $(date -R)
+          CHLOG
+            sed -i 's/^          //' debian/changelog
+
+            # Build and sign source package in one step
+            dpkg-buildpackage -S -sa -d -k"${GPG_FINGERPRINT}"
+
+            # Upload to PPA
+            cd "${WORKDIR}"
+            dput ppa:patchgoblin/aethertune "aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+
+            cd "${STARTDIR}"
+          done

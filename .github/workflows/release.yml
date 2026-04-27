@@ -10,98 +10,10 @@ permissions:
 
 jobs:
   build-linux:
-    name: Build Linux x86_64
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpulse-dev
-
-      - name: Build release binary
-        run: cargo build --release
-
-      - name: Strip binary
-        run: strip target/release/AetherTune
-
-      - name: Package binary
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          mkdir -p "AetherTune-${TAG}-linux-x86_64"
-          cp target/release/AetherTune "AetherTune-${TAG}-linux-x86_64/"
-          cp README.md LICENSE "AetherTune-${TAG}-linux-x86_64/"
-          tar czf "AetherTune-${TAG}-linux-x86_64.tar.gz" "AetherTune-${TAG}-linux-x86_64"
-
-      - name: Compute sha256sum
-        id: sha
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          SHA=$(sha256sum "AetherTune-${TAG}-linux-x86_64.tar.gz" | cut -d' ' -f1)
-          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: linux-x86_64
-          path: AetherTune-*.tar.gz
-
-    outputs:
-      sha256: ${{ steps.sha.outputs.sha256 }}
-      tag: ${{ steps.sha.outputs.tag }}
-      version: ${{ steps.sha.outputs.version }}
+    uses: ./.github/workflows/build-linux.yml
 
   build-windows:
-    name: Build Windows x86_64
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build release binary
-        run: cargo build --release
-
-      - name: Download mpv
-        shell: bash
-        run: |
-          # Get the latest mpv Windows build from shinchiro's releases via GitHub API
-          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest \
-            | grep "browser_download_url.*mpv-x86_64-[0-9].*\.7z" \
-            | grep -v "dev\|v3" \
-            | head -1 \
-            | cut -d'"' -f4)
-          echo "Downloading mpv from: ${DOWNLOAD_URL}"
-          curl -L -o mpv.7z "${DOWNLOAD_URL}"
-          7z x mpv.7z -ompv_extracted
-          # mpv extracts into a subdirectory, find mpv.exe
-          find mpv_extracted -name "mpv.exe" -type f
-
-      - name: Package binary
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          mkdir -p "AetherTune-${TAG}-windows-x86_64"
-          cp target/release/AetherTune.exe "AetherTune-${TAG}-windows-x86_64/"
-          # mpv extracts into a dated subdirectory, find and copy mpv.exe
-          MPV_EXE=$(find mpv_extracted -name "mpv.exe" -type f | head -1)
-          echo "Found mpv at: ${MPV_EXE}"
-          cp "${MPV_EXE}" "AetherTune-${TAG}-windows-x86_64/"
-          cp README.md LICENSE "AetherTune-${TAG}-windows-x86_64/"
-          7z a "AetherTune-${TAG}-windows-x86_64.zip" "AetherTune-${TAG}-windows-x86_64"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: windows-x86_64
-          path: AetherTune-*.zip
+    uses: ./.github/workflows/build-windows.yml
 
   release:
     name: Create GitHub Release
@@ -124,133 +36,17 @@ jobs:
             artifacts/*.zip
 
   aur:
-    name: Update AUR Package
     needs: [build-linux, release]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Generate PKGBUILD
-        run: |
-          VERSION="${{ needs.build-linux.outputs.version }}"
-          SHA256="${{ needs.build-linux.outputs.sha256 }}"
-
-          cat > PKGBUILD <<PKGEOF
-          # Maintainer: sineyed
-          pkgname=aethertune-bin
-          pkgver=${VERSION}
-          pkgrel=1
-          pkgdesc="A terminal-based internet radio player with real-time audio visualization, built in Rust"
-          arch=('x86_64')
-          url="https://github.com/nevermore23274/AetherTune"
-          license=('MIT')
-          depends=('mpv' 'libpulse')
-          optdepends=('pipewire-pulse: PipeWire-based audio capture for visualizer'
-                      'pulseaudio: PulseAudio-based audio capture for visualizer')
-          provides=('aethertune')
-          conflicts=('aethertune' 'aethertune-git')
-          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/nevermore23274/AetherTune/releases/download/v\${pkgver}/AetherTune-v\${pkgver}-linux-x86_64.tar.gz")
-          sha256sums=('${SHA256}')
-
-          package() {
-              cd "AetherTune-v\${pkgver}-linux-x86_64"
-              install -Dm755 AetherTune "\${pkgdir}/usr/bin/aethertune"
-              install -Dm644 LICENSE "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
-              install -Dm644 README.md "\${pkgdir}/usr/share/doc/\${pkgname}/README.md"
-          }
-          PKGEOF
-
-          sed -i 's/^          //' PKGBUILD
-
-      - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
-        with:
-          pkgname: aethertune-bin
-          pkgbuild: ./PKGBUILD
-          commit_username: sineyed
-          commit_email: sineyed@users.noreply.github.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to v${{ needs.build-linux.outputs.version }}"
-          ssh_keyscan_types: ed25519
+    uses: ./.github/workflows/publish-aur.yml
+    with:
+      version: ${{ needs.build-linux.outputs.version }}
+      sha256: ${{ needs.build-linux.outputs.sha256 }}
+    secrets: inherit
 
   ppa:
-    name: Update PPA Package
     needs: [build-linux, release]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: linux-x86_64
-          path: artifacts
-
-      - name: Install packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y debhelper devscripts dput
-
-      - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v7
-        with:
-          gpg_private_key: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.PPA_GPG_PASSPHRASE }}
-        id: import_gpg
-
-      - name: Set GPG fingerprint
-        run: |
-          FINGERPRINT=$(gpg --list-secret-keys --with-colons | grep fpr | head -1 | cut -d: -f10)
-          echo "GPG_FINGERPRINT=${FINGERPRINT}" >> "$GITHUB_ENV"
-
-      - name: Build and upload for each series
-        run: |
-          VERSION="${{ needs.build-linux.outputs.version }}"
-          TAG="${{ needs.build-linux.outputs.tag }}"
-
-          # Extract the release tarball to get the binary
-          STARTDIR="$(pwd)"
-          tar xzf "artifacts/AetherTune-${TAG}-linux-x86_64.tar.gz"
-
-          for SERIES in noble jammy; do
-            echo "=== Building for ${SERIES} ==="
-            WORKDIR="/tmp/${SERIES}"
-            mkdir -p "${WORKDIR}"
-
-            # Create source directory
-            mkdir -p "${WORKDIR}/aethertune-${VERSION}"
-            cp "AetherTune-${TAG}-linux-x86_64/AetherTune" "${WORKDIR}/aethertune-${VERSION}/aethertune"
-            cp "AetherTune-${TAG}-linux-x86_64/LICENSE" "${WORKDIR}/aethertune-${VERSION}/"
-            cp "AetherTune-${TAG}-linux-x86_64/README.md" "${WORKDIR}/aethertune-${VERSION}/"
-
-            # Create orig tarball
-            cd "${WORKDIR}"
-            tar czf "aethertune_${VERSION}.orig.tar.gz" "aethertune-${VERSION}"
-
-            # Copy debian directory
-            cp -r "${GITHUB_WORKSPACE}/debian" "aethertune-${VERSION}/debian"
-
-            # Update changelog for this series
-            cd "aethertune-${VERSION}"
-            cat > debian/changelog <<CHLOG
-          aethertune (${VERSION}-ppa1~${SERIES}) ${SERIES}; urgency=medium
-
-            * Release v${VERSION}
-
-           -- sineyed <sineyed@users.noreply.github.com>  $(date -R)
-          CHLOG
-            sed -i 's/^          //' debian/changelog
-
-            # Build and sign source package in one step
-            dpkg-buildpackage -S -sa -d -k"${GPG_FINGERPRINT}"
-
-            # Upload to PPA
-            cd "${WORKDIR}"
-            dput ppa:patchgoblin/aethertune "aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
-
-            cd "${STARTDIR}"
-          done
+    uses: ./.github/workflows/publish-ppa.yml
+    with:
+      version: ${{ needs.build-linux.outputs.version }}
+      tag: ${{ needs.build-linux.outputs.tag }}
+    secrets: inherit

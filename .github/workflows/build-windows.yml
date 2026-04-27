@@ -1,0 +1,52 @@
+name: Build Windows
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Download mpv
+        shell: bash
+        run: |
+          # Get the latest mpv Windows build from shinchiro's releases via GitHub API
+          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest \
+            | grep "browser_download_url.*mpv-x86_64-[0-9].*\.7z" \
+            | grep -v "dev\|v3" \
+            | head -1 \
+            | cut -d'"' -f4)
+          echo "Downloading mpv from: ${DOWNLOAD_URL}"
+          curl -L -o mpv.7z "${DOWNLOAD_URL}"
+          7z x mpv.7z -ompv_extracted
+          # mpv extracts into a subdirectory, find mpv.exe
+          find mpv_extracted -name "mpv.exe" -type f
+
+      - name: Package binary
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p "AetherTune-${TAG}-windows-x86_64"
+          cp target/release/AetherTune.exe "AetherTune-${TAG}-windows-x86_64/"
+          # mpv extracts into a dated subdirectory, find and copy mpv.exe
+          MPV_EXE=$(find mpv_extracted -name "mpv.exe" -type f | head -1)
+          echo "Found mpv at: ${MPV_EXE}"
+          cp "${MPV_EXE}" "AetherTune-${TAG}-windows-x86_64/"
+          cp README.md LICENSE "AetherTune-${TAG}-windows-x86_64/"
+          7z a "AetherTune-${TAG}-windows-x86_64.zip" "AetherTune-${TAG}-windows-x86_64"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-x86_64
+          path: AetherTune-*.zip

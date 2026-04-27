@@ -1,0 +1,66 @@
+name: Publish AUR
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      sha256:
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  aur:
+    name: Update AUR Package
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate PKGBUILD
+        run: |
+          VERSION="${{ inputs.version }}"
+          SHA256="${{ inputs.sha256 }}"
+
+          cat > PKGBUILD <<PKGEOF
+          # Maintainer: sineyed
+          pkgname=aethertune-bin
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="A terminal-based internet radio player with real-time audio visualization, built in Rust"
+          arch=('x86_64')
+          url="https://github.com/nevermore23274/AetherTune"
+          license=('MIT')
+          depends=('mpv' 'libpulse')
+          optdepends=('pipewire-pulse: PipeWire-based audio capture for visualizer'
+                      'pulseaudio: PulseAudio-based audio capture for visualizer')
+          provides=('aethertune')
+          conflicts=('aethertune' 'aethertune-git')
+          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/nevermore23274/AetherTune/releases/download/v\${pkgver}/AetherTune-v\${pkgver}-linux-x86_64.tar.gz")
+          sha256sums=('${SHA256}')
+
+          package() {
+              cd "AetherTune-v\${pkgver}-linux-x86_64"
+              install -Dm755 AetherTune "\${pkgdir}/usr/bin/aethertune"
+              install -Dm644 LICENSE "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+              install -Dm644 README.md "\${pkgdir}/usr/share/doc/\${pkgname}/README.md"
+          }
+          PKGEOF
+
+          sed -i 's/^          //' PKGBUILD
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+        with:
+          pkgname: aethertune-bin
+          pkgbuild: ./PKGBUILD
+          commit_username: sineyed
+          commit_email: sineyed@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ inputs.version }}"
+          ssh_keyscan_types: ed25519

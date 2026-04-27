@@ -1,0 +1,59 @@
+name: Build Linux
+
+on:
+  workflow_call:
+    outputs:
+      sha256:
+        value: ${{ jobs.build.outputs.sha256 }}
+      tag:
+        value: ${{ jobs.build.outputs.tag }}
+      version:
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Strip binary
+        run: strip target/release/AetherTune
+
+      - name: Package binary
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p "AetherTune-${TAG}-linux-x86_64"
+          cp target/release/AetherTune "AetherTune-${TAG}-linux-x86_64/"
+          cp README.md LICENSE "AetherTune-${TAG}-linux-x86_64/"
+          tar czf "AetherTune-${TAG}-linux-x86_64.tar.gz" "AetherTune-${TAG}-linux-x86_64"
+
+      - name: Compute sha256sum
+        id: sha
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          SHA=$(sha256sum "AetherTune-${TAG}-linux-x86_64.tar.gz" | cut -d' ' -f1)
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-x86_64
+          path: AetherTune-*.tar.gz
+
+    outputs:
+      sha256: ${{ steps.sha.outputs.sha256 }}
+      tag: ${{ steps.sha.outputs.tag }}
+      version: ${{ steps.sha.outputs.version }}
