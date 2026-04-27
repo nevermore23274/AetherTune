@@ -50,3 +50,12 @@ jobs:
       version: ${{ needs.build-linux.outputs.version }}
       tag: ${{ needs.build-linux.outputs.tag }}
     secrets: inherit
+
+  brew:
+    needs: [build-linux, release]
+    uses: ./.github/workflows/publish-brew.yml
+    with:
+      version: ${{ needs.build-linux.outputs.version }}
+      tag: ${{ needs.build-linux.outputs.tag }}
+      sha256: ${{ needs.build-linux.outputs.sha256 }}
+    secrets: inherit

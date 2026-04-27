@@ -27,10 +27,13 @@ jobs:
           VERSION="${{ inputs.version }}"
           SHA256="${{ inputs.sha256 }}"
 
+          # AUR pkgver doesn't allow hyphens — replace with underscores
+          PKGVER="${VERSION//-/_}"
+
           cat > PKGBUILD <<PKGEOF
           # Maintainer: sineyed
           pkgname=aethertune-bin
-          pkgver=${VERSION}
+          pkgver=${PKGVER}
           pkgrel=1
           pkgdesc="A terminal-based internet radio player with real-time audio visualization, built in Rust"
           arch=('x86_64')
