@@ -208,6 +208,8 @@ pub struct App {
     pub visualizer: Visualizer,
     pub now_playing: Option<NowPlaying>,
     pub status_message: Option<String>,
+    /// Error message displayed in the Now Playing panel (e.g. mpv not found)
+    pub error_message: Option<String>,
     pub page_size: u32,
     pub has_more: bool,
     pub last_query: QueryKind,
@@ -300,6 +302,7 @@ impl App {
             visualizer: Visualizer::new(),
             now_playing: None,
             status_message: None,
+            error_message: None,
             page_size: 30,
             has_more,
             last_query: QueryKind::Tag("lo-fi".to_string()),
@@ -390,54 +393,78 @@ impl App {
     }
 
     pub fn play(&mut self) {
+        // Clear any previous error
+        self.error_message = None;
+
         match self.active_panel {
             ActivePanel::Stations => {
                 if let Some(station) = self.stations.get(self.selected_index) {
-                    self.player.play_url(&station.url, self.volume);
-                    self.now_playing = Some(NowPlaying::from_station(station));
-                    self.history.add(&station.name, &station.url, &station.tags, &station.country, station.bitrate);
-                    self.status_message = Some(format!("♪ Playing: {}", station.name));
+                    if self.player.play_url(&station.url, self.volume) {
+                        self.now_playing = Some(NowPlaying::from_station(station));
+                        self.history.add(&station.name, &station.url, &station.tags, &station.country, station.bitrate);
+                        self.status_message = Some(format!("♪ Playing: {}", station.name));
+                    } else {
+                        self.error_message = Some(Self::mpv_error_message());
+                    }
                 }
             }
             ActivePanel::Favorites => {
                 if let Some(fav) = self.favorites.entries.get(self.fav_selected_index) {
-                    self.player.play_url(&fav.url, self.volume);
-                    self.now_playing = Some(NowPlaying {
-                        name: fav.name.clone(),
-                        genre: fav.genre.clone(),
-                        bitrate: fav.bitrate,
-                        codec: String::new(),
-                        country: fav.country.clone(),
-                        url: fav.url.clone(),
-                        homepage: String::new(),
-                        votes: 0,
-                    });
-                    self.history.add(&fav.name, &fav.url, &fav.genre, &fav.country, fav.bitrate);
-                    self.status_message = Some(format!("♪ Playing: {}", fav.name));
+                    if self.player.play_url(&fav.url, self.volume) {
+                        self.now_playing = Some(NowPlaying {
+                            name: fav.name.clone(),
+                            genre: fav.genre.clone(),
+                            bitrate: fav.bitrate,
+                            codec: String::new(),
+                            country: fav.country.clone(),
+                            url: fav.url.clone(),
+                            homepage: String::new(),
+                            votes: 0,
+                        });
+                        self.history.add(&fav.name, &fav.url, &fav.genre, &fav.country, fav.bitrate);
+                        self.status_message = Some(format!("♪ Playing: {}", fav.name));
+                    } else {
+                        self.error_message = Some(Self::mpv_error_message());
+                    }
                 }
             }
             ActivePanel::History => {
                 if let Some(entry) = self.history.entries.get(self.hist_selected_index) {
-                    self.player.play_url(&entry.url, self.volume);
-                    self.now_playing = Some(NowPlaying {
-                        name: entry.name.clone(),
-                        genre: entry.genre.clone(),
-                        bitrate: entry.bitrate,
-                        codec: String::new(),
-                        country: entry.country.clone(),
-                        url: entry.url.clone(),
-                        homepage: String::new(),
-                        votes: 0,
-                    });
-                    self.status_message = Some(format!("♪ Playing: {}", entry.name));
+                    if self.player.play_url(&entry.url, self.volume) {
+                        self.now_playing = Some(NowPlaying {
+                            name: entry.name.clone(),
+                            genre: entry.genre.clone(),
+                            bitrate: entry.bitrate,
+                            codec: String::new(),
+                            country: entry.country.clone(),
+                            url: entry.url.clone(),
+                            homepage: String::new(),
+                            votes: 0,
+                        });
+                        self.status_message = Some(format!("♪ Playing: {}", entry.name));
+                    } else {
+                        self.error_message = Some(Self::mpv_error_message());
+                    }
                 }
             }
+        }
+    }
+
+    /// Platform-appropriate error message when mpv is not found
+    fn mpv_error_message() -> String {
+        if cfg!(target_os = "macos") {
+            "mpv not found — install with: brew install mpv".to_string()
+        } else if cfg!(target_os = "windows") {
+            "mpv not found — download from mpv.io or reinstall AetherTune".to_string()
+        } else {
+            "mpv not found — install with your package manager (e.g. sudo apt install mpv)".to_string()
         }
     }
 
     pub fn stop(&mut self) {
         self.player.stop();
         self.now_playing = None;
+        self.error_message = None;
         self.visualizer.reset();
         self.status_message = Some("Playback stopped".to_string());
     }

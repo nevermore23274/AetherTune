@@ -45,7 +45,7 @@ jobs:
             license "MIT"
             version "RELEASE_VERSION"
 
-            depends_on :linux
+            depends_on "mpv"
 
             def install
               bin.install "AetherTune" => "aethertune"
@@ -53,10 +53,9 @@ jobs:
 
             def caveats
               <<~EOS
-                AetherTune requires mpv and PulseAudio/PipeWire for full functionality:
-                  sudo apt install mpv pulseaudio-utils    # Debian/Ubuntu
-                  sudo pacman -S mpv pipewire-pulse        # Arch
-                Without parec, the visualizer falls back to simulated mode.
+                On Linux, you'll also need pulseaudio-utils or pipewire-pulse
+                for real-time audio visualization.
+                On macOS, the visualizer runs in simulated mode.
               EOS
             end
 

@@ -62,12 +62,14 @@ Currently available for Ubuntu Noble (24.04). Dependencies (`mpv`, `libpulse0`) 
 <details>
 <summary><b>Linux / macOS — Homebrew</b></summary>
 
+If you don't have Homebrew, install it first from [brew.sh](https://brew.sh/).
+
 ```bash
 brew tap nevermore23274/aethertune
 brew install aethertune
 ```
 
-You'll also need `mpv` installed on your system (`brew install mpv`). On Linux, you'll additionally need `pulseaudio-utils` (or `pipewire-pulse`) for real-time audio visualization.
+This will automatically install `mpv` as a dependency. On Linux, you'll additionally need `pulseaudio-utils` (or `pipewire-pulse`) for real-time audio visualization.
 
 > **macOS note:** Audio visualization uses a simulated mode (no real-time audio capture yet). Playback, station browsing, favorites, and all other features work normally.
 
@@ -90,7 +92,7 @@ tar xzf AetherTune-VERSION-macos-x86_64.tar.gz
 ./AetherTune-VERSION-macos-x86_64/AetherTune
 ```
 
-Replace `VERSION` with the actual tag (e.g. `v0.7.0`). You'll need `mpv` installed on your system (`brew install mpv`).
+Replace `VERSION` with the actual tag (e.g. `v0.7.0`). You'll need `mpv` installed — if you have [Homebrew](https://brew.sh/): `brew install mpv`.
 
 > **macOS note:** Audio visualization uses a simulated mode. Playback and all other features work normally.
 

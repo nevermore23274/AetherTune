@@ -77,6 +77,17 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         if !np.homepage.is_empty() {
             lines.push(info_line("Web", &np.homepage, Color::Rgb(100, 150, 255)));
         }
+    } else if let Some(ref err) = app.error_message {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "⚠ Playback Error",
+            Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(YELLOW),
+        )));
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(

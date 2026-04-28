@@ -135,7 +135,7 @@ impl Player {
         { false }
     }
 
-    pub fn play_url(&mut self, url: &str, volume: u32) {
+    pub fn play_url(&mut self, url: &str, volume: u32) -> bool {
         self.stop();
 
         let mut cmd = std::process::Command::new("mpv");
@@ -170,8 +170,9 @@ impl Player {
                         self.start_capture();
                     }
                 }
+                true
             }
-            Err(e) => eprintln!("Failed to start mpv: {}", e),
+            Err(_) => false,
         }
     }
 
