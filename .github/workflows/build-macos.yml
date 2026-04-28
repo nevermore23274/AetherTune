@@ -6,15 +6,13 @@ on:
 jobs:
   build:
     name: Build macOS (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     strategy:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            runner: macos-13
             arch: x86_64
           - target: aarch64-apple-darwin
-            runner: macos-14
             arch: aarch64
 
     steps:
