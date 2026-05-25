@@ -90,9 +90,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .entries
                 .iter()
                 .map(|h| {
+                    let fav_marker = if app.is_favorite(&h.url) { "★ " } else { "  " };
                     let time_str = &h.played_at;
                     let line = Line::from(vec![
-                        Span::styled("  ", Style::default()),
+                        Span::styled(fav_marker, Style::default().fg(app.theme.text_warn)),
                         Span::styled(
                             truncate_str(&h.name, name_budget),
                             Style::default().fg(app.theme.text_muted),
