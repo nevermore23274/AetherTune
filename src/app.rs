@@ -761,6 +761,21 @@ impl App {
                 }
                 self.status_message = Some(format!("Removed '{}' from favorites", fav.name));
             }
+        } else if self.active_panel == ActivePanel::History {
+            if let Some(entry) = self.history.entries.get(self.hist_selected_index).cloned() {
+                let was_added = self.favorites.toggle(
+                    &entry.name,
+                    &entry.url,
+                    &entry.genre,
+                    &entry.country,
+                    entry.bitrate,
+                );
+                if was_added {
+                    self.status_message = Some(format!("★ Added '{}' to favorites", entry.name));
+                } else {
+                    self.status_message = Some(format!("Removed '{}' from favorites", entry.name));
+                }
+            }
         }
     }
 
