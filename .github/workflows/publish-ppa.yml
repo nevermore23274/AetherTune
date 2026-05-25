@@ -1,5 +1,4 @@
 name: Publish PPA
-
 on:
   workflow_call:
     inputs:
@@ -20,7 +19,6 @@ jobs:
     name: Update PPA Package
     runs-on: ubuntu-latest
     continue-on-error: true
-
     steps:
       - uses: actions/checkout@v6
 
@@ -56,6 +54,7 @@ jobs:
           STARTDIR="$(pwd)"
           tar xzf "artifacts/AetherTune-${TAG}-linux-x86_64.tar.gz"
 
+          FIRST=true
           for SERIES in noble jammy; do
             echo "=== Building for ${SERIES} ==="
             WORKDIR="/tmp/${SERIES}"
@@ -85,8 +84,13 @@ jobs:
           CHLOG
             sed -i 's/^          //' debian/changelog
 
-            # Build and sign source package in one step
-            dpkg-buildpackage -S -sa -d -k"${GPG_FINGERPRINT}"
+            # First series includes orig tarball (-sa), subsequent reuse it (-sd)
+            if [ "$FIRST" = true ]; then
+              dpkg-buildpackage -S -sa -d -k"${GPG_FINGERPRINT}"
+              FIRST=false
+            else
+              dpkg-buildpackage -S -sd -d -k"${GPG_FINGERPRINT}"
+            fi
 
             # Upload to PPA
             cd "${WORKDIR}"
