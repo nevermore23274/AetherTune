@@ -11,6 +11,11 @@ use std::os::unix::process::CommandExt;
 use crate::audio::pipe as audio_pipe;
 use crate::audio::pipe::SharedAnalysis;
 
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::Arc;
+
 pub struct StreamInfo {
     /// Actual audio bitrate in bits/sec from mpv (0 if unknown)
     pub audio_bitrate: f64,
@@ -76,6 +81,15 @@ pub struct Player {
     /// FIFO path for parec -> reader communication (Unix only)
     #[cfg(unix)]
     fifo_path: Option<PathBuf>,
+    /// WASAPI loopback capture thread (Windows only)
+    #[cfg(windows)]
+    capture_handle: Option<std::thread::JoinHandle<()>>,
+    /// Stop flag for the WASAPI capture thread (Windows only)
+    #[cfg(windows)]
+    capture_stop: Arc<AtomicBool>,
+    /// Job Object that ensures mpv.exe dies when AetherTune exits (Windows only)
+    #[cfg(windows)]
+    job_object: Option<crate::audio::jobobject::JobObject>,
     socket_path: PathBuf,
     /// IPC stream to mpv (Unix socket on Linux)
     #[cfg(unix)]
@@ -115,6 +129,12 @@ impl Player {
             reader_handle: None,
             #[cfg(unix)]
             fifo_path: None,
+            #[cfg(windows)]
+            capture_handle: None,
+            #[cfg(windows)]
+            capture_stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(windows)]
+            job_object: crate::audio::jobobject::JobObject::new(),
             socket_path,
             #[cfg(unix)]
             stream: None,
@@ -134,7 +154,7 @@ impl Player {
         #[cfg(unix)]
         { self.capture.is_some() }
         #[cfg(windows)]
-        { false }
+        { self.capture_handle.is_some() }
     }
 
     pub fn play_url(&mut self, url: &str, volume: u32) -> bool {
@@ -156,6 +176,14 @@ impl Player {
 
         match cmd.spawn() {
             Ok(c) => {
+                // On Windows, assign mpv to the Job Object so it dies with us
+                #[cfg(windows)]
+                {
+                    if let Some(ref job) = self.job_object {
+                        job.assign(&c);
+                    }
+                }
+
                 self.process = Some(c);
                 self.media_title = None;
                 self.stream_info.reset();
@@ -173,6 +201,15 @@ impl Player {
                         self.start_capture();
                     }
                 }
+
+                // On Windows, start WASAPI loopback capture if visualizer is enabled
+                #[cfg(windows)]
+                {
+                    if self.visualizer_enabled {
+                        self.start_capture();
+                    }
+                }
+
                 true
             }
             Err(_) => false,
@@ -222,6 +259,18 @@ impl Player {
         }
     }
 
+    /// Start WASAPI loopback capture for real-time audio visualization.
+    #[cfg(windows)]
+    fn start_capture(&mut self) {
+        // Reset the stop flag and spawn the capture thread
+        self.capture_stop.store(false, Ordering::Relaxed);
+        let handle = crate::audio::wasapi_capture::spawn_capture_thread(
+            self.analysis.clone(),
+            self.capture_stop.clone(),
+        );
+        self.capture_handle = Some(handle);
+    }
+
     #[cfg(unix)]
     fn stop_capture(&mut self) {
         if let Some(mut cap) = self.capture.take() {
@@ -255,7 +304,25 @@ impl Player {
 
     #[cfg(windows)]
     fn stop_capture(&mut self) {
-        // No capture on Windows yet
+        // Signal the capture thread to stop
+        self.capture_stop.store(true, Ordering::Relaxed);
+
+        if let Some(handle) = self.capture_handle.take() {
+            // Give the thread a moment to exit cleanly
+            let start = std::time::Instant::now();
+            loop {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                    break;
+                }
+                if start.elapsed() > std::time::Duration::from_millis(300) {
+                    break; // Don't block shutdown
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        self.analysis.write(crate::audio::pipe::AudioAnalysis::new());
     }
 
     /// Stop audio capture if it's currently running (called when visualizer is disabled)
@@ -266,6 +333,12 @@ impl Player {
                 self.stop_capture();
             }
         }
+        #[cfg(windows)]
+        {
+            if self.capture_handle.is_some() {
+                self.stop_capture();
+            }
+        }
     }
 
     /// Restart audio capture (called when visualizer is re-enabled while playing)
@@ -273,6 +346,12 @@ impl Player {
         #[cfg(unix)]
         {
             if self.has_parec && self.capture.is_none() && self.process.is_some() {
+                self.start_capture();
+            }
+        }
+        #[cfg(windows)]
+        {
+            if self.capture_handle.is_none() && self.process.is_some() {
                 self.start_capture();
             }
         }
