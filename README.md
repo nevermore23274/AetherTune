@@ -19,17 +19,18 @@ AetherTune is a TUI (terminal user interface) application that lets you browse, 
 
 - **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name. Results are sorted by popularity with broken streams and spam filtered out automatically
 - **Local blending** — optionally configure your country code in Settings to blend ~30% local stations into every genre and search result, interleaved naturally with global results
-- **Real-time audio visualization** — 16-band spectrum analyzer using a sliding-window radix-2 FFT (~94 updates/sec) on captured PCM audio via PulseAudio/PipeWire monitor, with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity
+- **Real-time audio visualization** — 16-band spectrum analyzer using a sliding-window radix-2 FFT (~94 updates/sec) with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity. On Linux, audio is captured via PulseAudio/PipeWire monitor; on Windows, via WASAPI loopback
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
 - **Customizable keybindings** — remap every keyboard shortcut from the in-app settings overlay, persisted to your config
+- **Color themes** — 8 built-in themes (CRT, Gruvbox, Nord, Dracula, Monokai, Catppuccin, Hacker, Solarized) with live preview
 - **Built-in profiler** — per-frame timing breakdown for performance tuning
-- **Fallback mode** — simulated visualizer when PulseAudio capture isn't available
+- **Fallback mode** — simulated visualizer when audio capture isn't available (e.g. macOS, or Linux without PulseAudio)
 
 ### Optional
 
-- Without `parec`, the app falls back to a simulated visualizer — everything else works normally.
+- Without `parec` (Linux), the app falls back to a simulated visualizer — everything else works normally.
 
 ## Installation
 
@@ -92,7 +93,7 @@ tar xzf AetherTune-VERSION-macos-x86_64.tar.gz
 ./AetherTune-VERSION-macos-x86_64/AetherTune
 ```
 
-Replace `VERSION` with the actual tag (e.g. `v0.7.1`). You'll need `mpv` installed — if you have [Homebrew](https://brew.sh/): `brew install mpv`.
+Replace `VERSION` with the actual tag (e.g. `v0.9.0`). You'll need `mpv` installed, if you have [Homebrew](https://brew.sh/): `brew install mpv`.
 
 > **macOS note:** Audio visualization uses a simulated mode. Playback and all other features work normally.
 
@@ -109,7 +110,7 @@ tar xzf AetherTune-VERSION-linux-x86_64.tar.gz
 ./AetherTune-VERSION-linux-x86_64/AetherTune
 ```
 
-Replace `VERSION` with the actual tag (e.g. `v0.7.1`). You'll need `mpv` and `parec` installed on your system.
+Replace `VERSION` with the actual tag (e.g. `v0.9.0`). You'll need `mpv` and `parec` installed on your system.
 
 </details>
 
@@ -163,9 +164,9 @@ Download the latest `.zip` from the [Releases page](https://github.com/nevermore
 2. Open **Windows Terminal** (recommended) and navigate to the folder
 3. Run `AetherTune.exe`
 
+Real-time audio visualization works out of the box via WASAPI loopback capture — no additional software is needed. The visualizer captures whatever is playing through your default audio output device.
+
 > **Note:** For the best experience, use [Windows Terminal](https://aka.ms/terminal) rather than cmd.exe. The legacy console has limited support for keyboard input and ANSI rendering that TUI apps rely on.
->
-> **Windows limitations:** Audio visualization uses a simulated mode (no real-time audio capture yet). Playback, station browsing, favorites, and all other features work normally.
 
 </details>
 
@@ -286,12 +287,23 @@ Only non-default keybindings are written to the config file to keep it clean. A 
 
 ```
 src/
-├── main.rs                   Entry point, event loop, frame timing
-├── app.rs                    App state, business logic, perf stats
+├── main.rs                   Event loop skeleton, terminal setup/teardown
+├── app.rs                    Re-export facade (delegates to core/*)
+├── core/
+│   ├── app.rs                App struct, construction, core methods
+│   ├── types.rs              InputMode, ActivePanel, Overlay, QueryKind, NowPlaying, SongLogEntry
+│   ├── radio.rs              RadioBrowser API: fetch, search, pagination, spam filtering
+│   └── perf.rs               PerfStats, FrameTiming, PerfSummary
+├── input/
+│   └── handler.rs            Keybinding dispatch (normal, editing, overlays)
 ├── audio/
-│   ├── player.rs             mpv playback, IPC, parec capture, stream info
-│   ├── pipe.rs               FIFO creation, PCM reader thread, radix-2 FFT, SeqLock
-│   └── visualizer.rs         Bar animation (real + simulated modes)
+│   ├── player.rs             mpv playback, IPC, platform-specific capture orchestration
+│   ├── pipe.rs               FIFO creation, PCM reader thread (Unix)
+│   ├── fft.rs                In-place radix-2 FFT, band grouping, perceptual weighting
+│   ├── seqlock.rs            Generic lock-free SeqLock<T: Copy>
+│   ├── visualizer.rs         Bar animation (CAVA-style real + simulated modes)
+│   ├── wasapi_capture.rs     WASAPI loopback audio capture (Windows)
+│   └── jobobject.rs          Win32 Job Object for mpv lifecycle (Windows)
 ├── storage/
 │   ├── config.rs             User preferences (tick rate, volume, country code, keybindings)
 │   ├── favorites.rs          JSON persistence for favorites
@@ -304,7 +316,7 @@ src/
     ├── station_list.rs       Left panel (stations/favorites/history)
     ├── now_playing.rs        Station info + session timer
     ├── song_log.rs           Rolling ICY metadata log
-    ├── visualizer.rs         Spectrum bar rendering
+    ├── visualizer.rs         Spectrum bar rendering (proportional sizing for any resolution)
     ├── stream_info.rs        Live stream health panel
     ├── media_browser.rs      Media source switcher (Radio/Subsonic stub)
     ├── overlays.rs           Help + station detail popups
@@ -318,15 +330,21 @@ src/
 
 ### Audio visualization pipeline
 
-When `parec` is available, AetherTune captures audio through the PulseAudio/PipeWire monitor source:
+AetherTune captures real audio for visualization on both Linux and Windows. The platform-specific capture feeds into a shared FFT and visualization pipeline.
 
-1. **mpv** plays audio normally through the default audio output
-2. **parec** captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO
-3. A background thread reads the FIFO using a **sliding window** — 512 new samples (~10.7ms) at a time, shifted into a 1024-sample buffer — then runs an **in-place radix-2 Cooley-Tukey FFT** with Hann windowing. This produces ~94 FFT updates/sec (2× the rate of full-chunk reads) without sacrificing frequency resolution. The 512 frequency bins are grouped into 16 logarithmically-spaced bands (50Hz–10kHz). FFT buffers, window coefficients, and band edges are all pre-allocated at thread startup for zero per-frame heap allocation.
-4. Band energies and RMS are published via a lock-free **sequence lock** (`SeqLock<AudioAnalysis>`) — the reader thread writes without blocking, and the render thread always reads the latest consistent snapshot with no contention
-5. The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment
+**Linux (PulseAudio/PipeWire):** `mpv` plays audio normally. `parec` captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO. A background thread reads the FIFO using a sliding window.
 
-Process isolation is handled carefully: `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes.
+**Windows (WASAPI):** `mpv` plays audio normally. A background thread opens the default output device in WASAPI loopback mode and reads whatever is playing through the speakers. No external tools or user configuration needed as WASAPI is built into Windows since Vista.
+
+**Shared pipeline (both platforms):** 512 new samples (~10.7ms) are shifted into a 1024-sample buffer, then an in-place radix-2 Cooley-Tukey FFT with Hann windowing produces ~94 updates/sec. The 512 frequency bins are grouped into 16 logarithmically-spaced bands (50Hz–10kHz) with perceptual weighting. FFT buffers, window coefficients, and band edges are all pre-allocated at thread startup for zero per-frame heap allocation.
+
+Band energies and RMS are published via a lock-free sequence lock (`SeqLock<AudioAnalysis>`). The reader thread writes without blocking, and the render thread always reads the latest consistent snapshot with no contention.
+
+The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment.
+
+**macOS:** Falls back to a simulated visualizer (animated based on audio activity detected via mpv IPC). Real-time capture is not yet implemented.
+
+**Process management:** On Linux, `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes. On Windows, `mpv.exe` is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, ensuring it is terminated automatically when AetherTune exits, even on crash or forced close.
 
 ### Data persistence
 

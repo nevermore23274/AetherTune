@@ -94,7 +94,7 @@ FFT rate      96/s  (~10.5ms per update)
 
 The smoothing value is runtime-only and resets to the default (70%) on restart.
 
-**FFT rate** shows how many FFT updates per second the audio reader thread is producing. The reader uses a sliding window — it reads 512 new samples (~10.7ms of audio at 48kHz) at a time, shifts the 1024-sample buffer, and runs a full FFT on the window. This produces ~94 updates/sec, roughly 2× what a full 1024-sample read would give (~47/s), without sacrificing frequency resolution. Color coding: green ≥80/s, yellow ≥40/s, red below. Shows "—" when no audio capture is active (e.g., on Windows or when parec is unavailable).
+**FFT rate** shows how many FFT updates per second the audio reader thread is producing. The reader uses a sliding window — it reads 512 new samples (~10.7ms of audio at 48kHz) at a time, shifts the 1024-sample buffer, and runs a full FFT on the window. This produces ~94 updates/sec, roughly 2× what a full 1024-sample read would give (~47/s), without sacrificing frequency resolution. Color coding: green ≥80/s, yellow ≥40/s, red below. Shows "—" when no audio capture is active (e.g., on macOS or when parec is unavailable on Linux).
 
 ### The avg and max Columns
 
@@ -145,7 +145,7 @@ The sparkline records one CPU load sample per frame into a separate 40-entry rin
 
 ### Audio Reader (Sliding Window)
 
-The `parec` reader thread uses a sliding window to maximize FFT update rate without sacrificing frequency resolution. Instead of reading a full 1024-sample chunk (~21ms at 48kHz) before running FFT, it reads 512 new samples (~10.7ms), shifts the 1024-sample buffer left, and runs FFT on the full window. This produces ~94 FFT updates/sec — 2× the rate of full-chunk reads — while keeping the same 1024-point FFT resolution. The `fft_count` field on `AudioAnalysis` is incremented on each update, and the profiler computes the rate by sampling this counter every ~1 second.
+The audio reader thread (Unix `parec` FIFO reader or Windows WASAPI loopback) uses a sliding window to maximize FFT update rate without sacrificing frequency resolution. Instead of reading a full 1024-sample chunk (~21ms at 48kHz) before running FFT, it reads 512 new samples (~10.7ms), shifts the 1024-sample buffer left, and runs FFT on the full window. This produces ~94 FFT updates/sec at 2× the rate of full-chunk reads while keeping the same 1024-point FFT resolution. The `fft_count` field on `AudioAnalysis` is incremented on each update, and the profiler computes the rate by sampling this counter every ~1 second.
 
 ## Reference Benchmarks
 
@@ -170,7 +170,7 @@ Key observations:
 
 ### Current Coverage
 
-AetherTune has unit tests across the `audio::pipe` and `audio::visualizer` modules, covering FFT computation, frequency band analysis, visualizer state management, and gravity/smoothing constants.
+AetherTune has unit tests across the `audio::fft`, `audio::visualizer`, and `storage::config` modules, covering FFT computation, frequency band analysis, visualizer state management, and gravity/smoothing constants.
 
 ```bash
 # Run all tests
@@ -180,7 +180,7 @@ cargo test
 cargo test -- --nocapture
 
 # Run a specific test module
-cargo test audio::pipe
+cargo test audio::fft
 ```
 
 ### CI

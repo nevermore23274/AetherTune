@@ -45,8 +45,7 @@ Audio visualization runs in simulated mode on macOS (real-time capture is not ye
 - `mpv.exe` — must be in the same directory as the AetherTune binary, or in your `PATH`
 - The release builds bundle `mpv.exe` automatically, but for development you'll need to download it from [mpv.io](https://mpv.io/) or [shinchiro's builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases)
 - Use [Windows Terminal](https://aka.ms/terminal) (`wt.exe`) for the best experience — the legacy `cmd.exe` console has limited ANSI and keyboard support
-
-Audio visualization runs in simulated mode on Windows.
+- No additional audio software is needed — WASAPI loopback capture works out of the box
 
 ### Clone and Build
 
@@ -83,33 +82,45 @@ cargo run -- --boot-speed=fast
 cargo test
 ```
 
-The test suite includes FFT accuracy tests (verifying frequency bin detection for known sine waves) and other unit tests. No external services or audio hardware are needed to run them.
+The test suite includes FFT accuracy tests (verifying frequency bin detection for known sine waves), visualizer state tests, and other unit tests. No external services or audio hardware are needed to run them.
 
 ## Project Structure
 
 ```
 src/
-├── main.rs           Event loop, key handling
-├── app.rs            App state, business logic
+├── main.rs                   Event loop skeleton, terminal setup/teardown
+├── app.rs                    Re-export facade (delegates to core/*)
+├── core/
+│   ├── app.rs                App struct and methods
+│   ├── types.rs              Domain types (InputMode, Overlay, NowPlaying, etc.)
+│   ├── radio.rs              RadioBrowser API functions
+│   └── perf.rs               Performance profiler infrastructure
+├── input/
+│   └── handler.rs            Keybinding dispatch for all modes and overlays
 ├── audio/
-│   ├── player.rs     mpv process management, IPC, stream info
-│   ├── pipe.rs       FIFO, PCM reader thread, FFT analysis
-│   └── visualizer.rs Bar animation (real + simulated)
+│   ├── player.rs             mpv process management, IPC, platform capture orchestration
+│   ├── pipe.rs               FIFO creation, PCM reader thread (Unix)
+│   ├── fft.rs                Radix-2 FFT, band grouping, perceptual weighting
+│   ├── seqlock.rs            Generic lock-free SeqLock<T: Copy>
+│   ├── visualizer.rs         Bar animation (real + simulated modes)
+│   ├── wasapi_capture.rs     WASAPI loopback capture (Windows only)
+│   └── jobobject.rs          Win32 Job Object for mpv lifecycle (Windows only)
 ├── storage/
-│   ├── config.rs     Settings + keybindings (hand-rolled JSON)
-│   ├── favorites.rs  Favorites persistence
-│   └── history.rs    Listening history persistence
+│   ├── config.rs             Settings + keybindings (hand-rolled JSON)
+│   ├── favorites.rs          Favorites persistence
+│   └── history.rs            Listening history persistence
 └── ui/
-    ├── mod.rs         Layout orchestration
-    ├── helpers.rs     Color palette, shared widgets
-    ├── settings.rs    Keybinding settings overlay
-    └── ...            Other UI panels and overlays
+    ├── mod.rs                Layout orchestration
+    ├── visualizer.rs         Spectrum bar rendering
+    ├── settings.rs           Keybinding settings overlay
+    └── ...                   Other UI panels and overlays
 ```
 
 Key things to know about the codebase:
 - **No serde.** JSON serialization/parsing is hand-rolled in `storage/` to keep the dependency tree minimal. If you add a new config field, you'll need to extend the parser manually.
-- **Platform gating** uses `#[cfg(unix)]` and `#[cfg(windows)]`. macOS falls under `#[cfg(unix)]`.
-- **Audio capture** (`parec`) is a runtime dependency, not a build dependency. The app detects it at startup and falls back to simulated visualization if it's not available.
+- **Re-export facade.** `src/app.rs` re-exports types from `core/*` so that all UI modules can use `use crate::app::{App, Overlay, ...}` without knowing about the internal module structure.
+- **Platform gating** uses `#[cfg(unix)]` and `#[cfg(windows)]`. macOS falls under `#[cfg(unix)]`. Windows-specific modules (`wasapi_capture.rs`, `jobobject.rs`) are gated at the module level in `audio/mod.rs`.
+- **Audio capture** is platform-specific at runtime: `parec` on Linux (detected at startup, falls back to simulated if missing), WASAPI loopback on Windows (built-in, no external tools). Both feed into the same FFT pipeline in `fft.rs` and publish results through the `SeqLock` in `seqlock.rs`.
 
 ## Making Changes
 
