@@ -23,8 +23,9 @@ AetherTune is a TUI (terminal user interface) application that lets you browse, 
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
+- **Configurable startup panel** — choose whether AetherTune opens to Stations, Favorites, or History from the launch menu's Settings screen
 - **Customizable keybindings** — remap every keyboard shortcut from the in-app settings overlay, persisted to your config
-- **Color themes** — 8 built-in themes (CRT, Gruvbox, Nord, Dracula, Monokai, Catppuccin, Hacker, Solarized) with live preview
+- **Color themes** — 8 built-in themes (CRT, Gruvbox, Nord, Dracula, Monokai, Catppuccin, Hacker, Solarized) with live preview, and an optional transparent background mode that works with any theme
 - **Built-in profiler** — per-frame timing breakdown for performance tuning
 - **Fallback mode** — simulated visualizer when audio capture isn't available (e.g. macOS, or Linux without PulseAudio)
 
@@ -194,9 +195,15 @@ aethertune --skip-menu
 
 # Adjust boot animation speed (fast, normal, slow, off)
 aethertune --boot-speed=fast
+
+# Store config.json, favorites.json, and history.json somewhere other
+# than the default ~/.aethertune — e.g. for XDG-style layouts or dotfile tracking
+aethertune --config-dir=$HOME/.config/aethertune
 ```
 
 > On Windows, run `AetherTune.exe` from Windows Terminal. If installed from source on Linux, use `./target/release/AetherTune`.
+
+You can set the same storage location via the `AETHERTUNE_CONFIG_DIR` environment variable instead of passing `--config-dir` every time — useful if you'd rather set it once in your shell profile. The flag takes priority if both are set. Either way, the directory is created automatically if it doesn't exist; the default remains `$HOME/.aethertune` (`$USERPROFILE\.aethertune` on Windows) unless overridden.
 
 ## Keybindings (Defaults)
 
@@ -227,7 +234,7 @@ Below is a list of default keyboard shortcuts. All keybindings can be remapped f
 
 ## Settings
 
-AetherTune has a settings screen accessible from the launch menu, and a keybinding settings overlay accessible during playback. Settings are persisted to `~/.aethertune/config.json`.
+AetherTune has a settings screen accessible from the launch menu, and a keybinding settings overlay accessible during playback. Settings are persisted to `~/.aethertune/config.json` by default — see [Usage](#usage) for how to store it elsewhere.
 
 ### Country Code
 
@@ -237,24 +244,17 @@ To configure: launch AetherTune → select **Settings** from the menu → type y
 
 Leave the country code empty (backspace to clear) for pure global results — this is the default.
 
+### Default Panel
+
+Choose which panel AetherTune opens to on launch: **Stations**, **Favorites**, or **History**. Useful if you mostly return to a curated favorites list rather than browsing fresh stations each time.
+
+To configure: launch AetherTune → select **Settings** from the menu → use **◂/▸** on the "Default Panel" field to cycle through the options → press **Enter** to save.
+
+The Stations tab is still preloaded with a Lo-fi station list in the background regardless of your default panel, so it's ready the moment you switch to it.
+
 ### Keybindings
 
 Every keyboard shortcut can be remapped. Press `S` during normal playback to open the keybinding settings overlay.
-
-### Themes
-
-Press `t` to open the theme picker. AetherTune ships with 8 built-in themes:
-
-- **CRT** — the default phosphor terminal aesthetic (cyan/magenta/neon green)
-- **Gruvbox** — warm retro palette
-- **Nord** — cool arctic blues
-- **Dracula** — dark purple
-- **Monokai** — classic editor colors
-- **Catppuccin** — pastel dark
-- **Hacker** — green-on-black matrix style
-- **Solarized** — precision colors for readability
-
-Themes apply to the player UI only (not the launcher or exit animation). Your selection is persisted to `~/.aethertune/config.json`. The theme picker shows live color swatches and previews each theme as you navigate.
 
 In the overlay:
 - **↑/↓** — navigate the action list
@@ -276,6 +276,8 @@ Only non-default keybindings are written to the config file to keep it clean. A 
   "country_code": "US",
   "theme": "CRT",
   "visualizer_enabled": true,
+  "default_panel": "Favorites",
+  "transparent_bg": false,
   "keybindings": {
       "quit": ["x"],
       "search": ["Space"]
@@ -283,12 +285,34 @@ Only non-default keybindings are written to the config file to keep it clean. A 
 }
 ```
 
+### Themes
+
+Press `t` to open the theme picker. AetherTune ships with 8 built-in themes:
+
+- **CRT** — the default phosphor terminal aesthetic (cyan/magenta/neon green)
+- **Gruvbox** — warm retro palette
+- **Nord** — cool arctic blues
+- **Dracula** — dark purple
+- **Monokai** — classic editor colors
+- **Catppuccin** — pastel dark
+- **Hacker** — green-on-black matrix style
+- **Solarized** — precision colors for readability
+
+Themes apply to the player UI only (not the launcher or exit animation). Your selection is persisted to `~/.aethertune/config.json`. The theme picker shows live color swatches and previews each theme as you navigate.
+
+In the picker:
+- **↑/↓** — navigate themes (each one live-previews as you move)
+- **Enter** — apply the selected theme and close
+- **b** — toggle transparent background
+- **Esc** — close (the live-previewed theme stays applied)
+
+**Transparent background** clears the player UI's panel backgrounds so your terminal emulator's own background shows through — including its transparency, if the terminal supports it (e.g. kitty, alacritty, WezTerm). It works with any of the 8 themes rather than being tied to one, toggles and persists immediately, and is saved to `config.json` independently of your theme choice. Selected/highlighted rows keep a solid background so they stay readable against a transparent terminal, and the effect is scoped to the player UI panels — overlays, the launch menu, and the boot/shutdown animations always keep their own fixed background.
+
 ## Architecture
 
 ```
 src/
 ├── main.rs                   Event loop skeleton, terminal setup/teardown
-├── app.rs                    Re-export facade (delegates to core/*)
 ├── core/
 │   ├── app.rs                App struct, construction, core methods
 │   ├── types.rs              InputMode, ActivePanel, Overlay, QueryKind, NowPlaying, SongLogEntry
@@ -307,7 +331,8 @@ src/
 ├── storage/
 │   ├── config.rs             User preferences (tick rate, volume, country code, keybindings)
 │   ├── favorites.rs          JSON persistence for favorites
-│   └── history.rs            JSON persistence for play history
+│   ├── history.rs            JSON persistence for play history
+│   └── paths.rs              Resolves the storage directory (--config-dir / AETHERTUNE_CONFIG_DIR / default)
 └── ui/
     ├── mod.rs                Layout orchestration
     ├── helpers.rs            Color palette, shared widgets
@@ -348,7 +373,7 @@ The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelera
 
 ### Data persistence
 
-Favorites, history, and user preferences (tick rate, volume, country code, keybindings) are stored as JSON in `~/.aethertune/`. The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate and keybindings are saved automatically when adjusted and restored on next launch. The country code is configured via the Settings screen in the launch menu. Only non-default keybindings are persisted to keep the config file clean.
+Favorites, history, and user preferences (tick rate, volume, country code, default panel, theme, transparent background, keybindings) are stored as JSON in `~/.aethertune/` by default, or wherever `--config-dir`/`AETHERTUNE_CONFIG_DIR` points (see [Usage](#usage)). The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate and keybindings are saved automatically when adjusted and restored on next launch. The country code and default panel are configured via the Settings screen in the launch menu. Only non-default keybindings are persisted to keep the config file clean.
 
 ## Contributing
 

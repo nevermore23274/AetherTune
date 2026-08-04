@@ -15,7 +15,8 @@ pub mod themes;
 pub mod theme_picker;
 pub mod visualizer;
 
-use crate::app::{App, Overlay};
+use crate::core::app::App;
+use crate::core::types::Overlay;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,

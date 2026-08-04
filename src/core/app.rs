@@ -73,6 +73,9 @@ pub struct App {
     pub theme_selected: usize,
     /// Whether the visualizer is enabled (can be toggled at runtime)
     pub visualizer_enabled: bool,
+    /// When true, theme backgrounds are cleared so the terminal's own
+    /// (possibly transparent) background shows through instead
+    pub transparent_bg: bool,
 }
 
 impl App {
@@ -101,7 +104,7 @@ impl App {
                 "News", "Talk", "Chat", "Sports",
             ],
             category_index: 0,
-            active_panel: ActivePanel::Stations,
+            active_panel: ActivePanel::from_config_str(&config.default_panel),
             overlay: Overlay::None,
             favorites: FavoritesStore::load(),
             history: HistoryStore::load(),
@@ -131,12 +134,13 @@ impl App {
             is_loading: false,
             pending_fetch: None,
             genre_selected: 0,
-            theme: crate::ui::themes::Theme::by_name(&config.theme),
+            theme: crate::ui::themes::Theme::by_name(&config.theme).with_transparency(config.transparent_bg),
             theme_selected: {
                 let all = crate::ui::themes::Theme::all();
                 all.iter().position(|t| t.name.eq_ignore_ascii_case(&config.theme)).unwrap_or(0)
             },
             visualizer_enabled: config.visualizer_enabled,
+            transparent_bg: config.transparent_bg,
         }
     }
 
@@ -219,6 +223,7 @@ impl App {
                         stations,
                         query: QueryKind::Tag(query_tag),
                         message: msg,
+                        switch_to_stations: true,
                     }
                 }
                 Err(e) => FetchResult::Error(format!("⚠ Failed to load '{}': {}", genre, e)),
@@ -334,6 +339,7 @@ impl App {
         config.keybindings = self.keybindings.clone();
         config.theme = self.theme.name.to_string();
         config.visualizer_enabled = self.visualizer_enabled;
+        config.transparent_bg = self.transparent_bg;
         config.save();
     }
 
@@ -403,6 +409,7 @@ impl App {
                         stations,
                         query: QueryKind::Search(search_query),
                         message: msg,
+                        switch_to_stations: true,
                     }
                 }
                 Err(e) => FetchResult::Error(format!("⚠ Search failed: {}", e)),
@@ -459,13 +466,17 @@ impl App {
                 self.pending_fetch = None;
                 self.is_loading = false;
                 match result {
-                    FetchResult::Replace { stations, query, message } => {
+                    FetchResult::Replace { stations, query, message, switch_to_stations } => {
                         self.has_more = stations.len() as u32 >= self.page_size;
                         self.stations = stations;
                         self.last_query = query;
                         self.selected_index = 0;
-                        self.active_panel = ActivePanel::Stations;
-                        self.status_message = Some(message);
+                        if switch_to_stations {
+                            self.active_panel = ActivePanel::Stations;
+                            self.status_message = Some(message);
+                        }
+                        // Silent startup preload: stations are ready for whenever the
+                        // user tabs over, but we don't steal their panel or narrate it.
                     }
                     FetchResult::Append { mut stations } => {
                         let fetched = stations.len();
@@ -521,6 +532,7 @@ impl App {
                         stations,
                         query: QueryKind::Tag("lo-fi".to_string()),
                         message: msg,
+                        switch_to_stations: false,
                     }
                 }
                 Err(e) => FetchResult::Error(

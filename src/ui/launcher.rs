@@ -154,6 +154,8 @@ struct MenuApp {
     timing: Timing,
     /// Country code input buffer for settings screen
     settings_country: String,
+    /// Which panel AetherTune opens to on launch, cycled with Left/Right on the settings screen
+    settings_default_panel: crate::core::types::ActivePanel,
 }
 
 impl MenuApp {
@@ -179,6 +181,7 @@ impl MenuApp {
             connect_start: None,
             timing: Timing::new(speed),
             settings_country: config.country_code,
+            settings_default_panel: crate::core::types::ActivePanel::from_config_str(&config.default_panel),
         }
     }
 
@@ -248,18 +251,11 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                         _ => {}
                     },
                     MenuState::Settings => match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc | KeyCode::Enter => {
                             // Save and return to main menu
                             let mut config = crate::storage::config::Config::load();
                             config.country_code = menu.settings_country.clone().to_uppercase();
-                            config.save();
-                            menu.settings_country = config.country_code.clone();
-                            menu.state = MenuState::Main;
-                        }
-                        KeyCode::Enter => {
-                            // Save and return to main menu
-                            let mut config = crate::storage::config::Config::load();
-                            config.country_code = menu.settings_country.clone().to_uppercase();
+                            config.default_panel = menu.settings_default_panel.as_str().to_string();
                             config.save();
                             menu.settings_country = config.country_code.clone();
                             menu.state = MenuState::Main;
@@ -271,6 +267,17 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                         }
                         KeyCode::Backspace => {
                             menu.settings_country.pop();
+                        }
+                        KeyCode::Left | KeyCode::Right => {
+                            use crate::core::types::ActivePanel;
+                            let all = ActivePanel::ALL;
+                            let current = all.iter().position(|p| *p == menu.settings_default_panel).unwrap_or(0);
+                            let next = if key.code == KeyCode::Right {
+                                (current + 1) % all.len()
+                            } else {
+                                (current + all.len() - 1) % all.len()
+                            };
+                            menu.settings_default_panel = all[next].clone();
                         }
                         _ => {}
                     },
@@ -811,9 +818,18 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
+    // Reflects where the app is actually about to land, not a hardcoded genre —
+    // the Lo-fi station list is only ever fetched as a silent background
+    // preload for the Stations tab, so it shouldn't be presented as the
+    // destination when the user's default panel is Favorites/History.
+    let (dest_label, dest_value) = match menu.settings_default_panel {
+        crate::core::types::ActivePanel::Stations => ("Genre      ", "Lo-fi".to_string()),
+        crate::core::types::ActivePanel::Favorites => ("Panel      ", "Favorites".to_string()),
+        crate::core::types::ActivePanel::History => ("Panel      ", "History".to_string()),
+    };
     lines.push(Line::from(vec![
-        Span::styled("  Genre      ", Style::default().fg(Color::Rgb(100, 100, 130))),
-        Span::styled("Lo-fi", Style::default().fg(Color::Rgb(255, 215, 0))),
+        Span::styled(format!("  {}", dest_label), Style::default().fg(Color::Rgb(100, 100, 130))),
+        Span::styled(dest_value, Style::default().fg(Color::Rgb(255, 215, 0))),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  Audio      ", Style::default().fg(Color::Rgb(100, 100, 130))),
@@ -914,7 +930,7 @@ fn draw_settings(f: &mut Frame, menu: &MenuApp) {
     f.render_widget(bg, area);
 
     let box_width = 56u16;
-    let box_height = 18u16;
+    let box_height = 24u16;
     let box_x = area.width.saturating_sub(box_width) / 2;
     let box_y = area.height.saturating_sub(box_height) / 2;
     let box_area = Rect::new(
@@ -1002,6 +1018,32 @@ fn draw_settings(f: &mut Frame, menu: &MenuApp) {
             ),
         ]),
         Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "Default Panel",
+                Style::default()
+                    .fg(Color::Rgb(0, 255, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ◂ ", Style::default().fg(Color::Rgb(0, 255, 255))),
+            Span::styled(
+                format!("{:^11}", menu.settings_default_panel.as_str()),
+                Style::default()
+                    .fg(Color::Rgb(57, 255, 20))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ▸", Style::default().fg(Color::Rgb(0, 255, 255))),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  Which tab AetherTune opens to on launch",
+                Style::default().fg(Color::Rgb(80, 80, 110)),
+            ),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("  Enter ", Style::default().fg(Color::Rgb(0, 255, 255))),
@@ -1009,7 +1051,9 @@ fn draw_settings(f: &mut Frame, menu: &MenuApp) {
             Span::styled("  Esc ", Style::default().fg(Color::Rgb(0, 255, 255))),
             Span::styled("save & back  ", Style::default().fg(Color::Rgb(80, 80, 100))),
             Span::styled("  Bksp ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled("clear", Style::default().fg(Color::Rgb(80, 80, 100))),
+            Span::styled("clear code  ", Style::default().fg(Color::Rgb(80, 80, 100))),
+            Span::styled("  ◂▸ ", Style::default().fg(Color::Rgb(0, 255, 255))),
+            Span::styled("panel", Style::default().fg(Color::Rgb(80, 80, 100))),
         ]),
     ];
 

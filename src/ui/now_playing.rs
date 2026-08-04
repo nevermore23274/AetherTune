@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::core::app::App;
 use super::helpers::info_line;
 use ratatui::{
     style::{Color, Modifier, Style},

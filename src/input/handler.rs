@@ -184,18 +184,30 @@ fn handle_theme_picker(app: &mut App, code: KeyCode) {
             if app.theme_selected > 0 {
                 app.theme_selected -= 1;
                 // Live preview
-                app.theme = themes.into_iter().nth(app.theme_selected).unwrap();
+                app.theme = themes.into_iter().nth(app.theme_selected).unwrap()
+                    .with_transparency(app.transparent_bg);
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.theme_selected < total - 1 {
                 app.theme_selected += 1;
                 // Live preview
-                app.theme = themes.into_iter().nth(app.theme_selected).unwrap();
+                app.theme = themes.into_iter().nth(app.theme_selected).unwrap()
+                    .with_transparency(app.transparent_bg);
             }
         }
+        KeyCode::Char('b') => {
+            // Toggle transparent background — applies globally across all themes,
+            // not just the one currently previewed, and persists immediately
+            // like the visualizer toggle does.
+            app.transparent_bg = !app.transparent_bg;
+            app.theme = themes.into_iter().nth(app.theme_selected).unwrap()
+                .with_transparency(app.transparent_bg);
+            app.save_config();
+        }
         KeyCode::Enter => {
-            app.theme = themes.into_iter().nth(app.theme_selected).unwrap();
+            app.theme = themes.into_iter().nth(app.theme_selected).unwrap()
+                .with_transparency(app.transparent_bg);
             app.save_config();
             app.overlay = Overlay::None;
         }
