@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::audio::fft::{self, FFT_SIZE, MAGNITUDE_COUNT};
-use crate::audio::pipe::{AudioAnalysis, SharedAnalysis, NUM_BANDS};
+use crate::audio::pipe::{AudioAnalysis, SharedAnalysis};
 
 /// Spawn a background thread that captures system audio via WASAPI loopback.
 ///
@@ -31,8 +31,10 @@ fn capture_loop(
     analysis: &SharedAnalysis,
     stop: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize COM on this thread (multi-threaded apartment)
-    wasapi::initialize_mta()?;
+    // Initialize COM on this thread (multi-threaded apartment).
+    // initialize_mta() returns a raw HRESULT rather than a Result, so .ok()
+    // converts it (S_OK -> Ok(()), anything else -> Err) before `?` can apply.
+    wasapi::initialize_mta().ok()?;
 
     // Get the default output (render) device — capturing from it gives us
     // loopback audio (whatever is playing through the speakers)
@@ -87,6 +89,12 @@ fn capture_loop(
     let band_edges = fft::compute_band_edges();
     let mut fft_count: u64 = 0;
 
+    // Reused capture buffer — grown (never shrunk) to fit the largest packet
+    // seen so far, matching the zero-per-frame-allocation approach used by
+    // the FFT buffers above. read_from_device() writes raw bytes into this
+    // and reports back how many frames it actually filled.
+    let mut capture_buf: Vec<u8> = Vec::new();
+
     loop {
         if stop.load(Ordering::Relaxed) {
             break;
@@ -104,13 +112,23 @@ fn capture_loop(
                 _ => break,
             };
 
-            let data = match capture_client.read_from_device(packet_size) {
-                Ok(d) => d,
+            // read_from_device takes a pre-sized &mut [u8] and reports back
+            // the number of frames it actually filled (not bytes, and not
+            // necessarily all of packet_size) via the returned u32 — the
+            // buffer must be at least that large going in.
+            let needed_bytes = packet_size * block_align;
+            if capture_buf.len() < needed_bytes {
+                capture_buf.resize(needed_bytes, 0);
+            }
+
+            let frames_read = match capture_client.read_from_device(&mut capture_buf[..needed_bytes]) {
+                Ok((frames, _buffer_info)) => frames as usize,
                 Err(_) => break,
             };
+            let data = &capture_buf[..frames_read * block_align];
 
             // Convert each frame to mono f64
-            for frame in 0..packet_size {
+            for frame in 0..frames_read {
                 let offset = frame * block_align;
 
                 let mono = if bits_per_sample == 32 {

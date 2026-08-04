@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::seqlock::SeqLock;
+#[cfg(unix)]
 use super::fft::{self, FFT_SIZE, MAGNITUDE_COUNT};
 
 /// Number of frequency bands we compute for the visualizer
