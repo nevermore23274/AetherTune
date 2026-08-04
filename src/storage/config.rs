@@ -223,17 +223,17 @@ pub struct Config {
     pub theme: String,
     /// Whether the visualizer is enabled (default: true)
     pub visualizer_enabled: bool,
+    /// Which panel is active on startup ("Stations", "Favorites", or "History")
+    pub default_panel: String,
+    /// When true, theme backgrounds are cleared to let the terminal's own
+    /// background (and its transparency, if configured) show through.
+    pub transparent_bg: bool,
     path: PathBuf,
 }
 
 impl Config {
     fn storage_path() -> PathBuf {
-        let base = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        let mut path = PathBuf::from(base);
-        path.push(".aethertune");
-        fs::create_dir_all(&path).ok();
+        let mut path = crate::storage::paths::base_dir();
         path.push("config.json");
         path
     }
@@ -255,7 +255,11 @@ impl Config {
                     .unwrap_or_else(|| "CRT".to_string());
                 let visualizer_enabled = Self::extract_bool(&contents, "visualizer_enabled")
                     .unwrap_or(true);
-                return Self { tick_rate_ms, volume, country_code, keybindings, theme, visualizer_enabled, path };
+                let default_panel = Self::extract_string(&contents, "default_panel")
+                    .unwrap_or_else(|| "Stations".to_string());
+                let transparent_bg = Self::extract_bool(&contents, "transparent_bg")
+                    .unwrap_or(false);
+                return Self { tick_rate_ms, volume, country_code, keybindings, theme, visualizer_enabled, default_panel, transparent_bg, path };
             }
         }
         Self {
@@ -265,6 +269,8 @@ impl Config {
             keybindings: KeyBindings::default(),
             theme: "CRT".to_string(),
             visualizer_enabled: true,
+            default_panel: "Stations".to_string(),
+            transparent_bg: false,
             path,
         }
     }
@@ -313,10 +319,11 @@ impl Config {
         };
 
         let theme_escaped = self.theme.replace('\\', "\\\\").replace('"', "\\\"");
+        let default_panel_escaped = self.default_panel.replace('\\', "\\\\").replace('"', "\\\"");
 
         let json = format!(
-            "{{\n  \"tick_rate_ms\": {},\n  \"volume\": {},\n  \"country_code\": \"{}\",\n  \"theme\": \"{}\",\n  \"visualizer_enabled\": {},\n    \"keybindings\": {}\n}}",
-            self.tick_rate_ms, self.volume, cc_escaped, theme_escaped, self.visualizer_enabled, kb_json
+            "{{\n  \"tick_rate_ms\": {},\n  \"volume\": {},\n  \"country_code\": \"{}\",\n  \"theme\": \"{}\",\n  \"visualizer_enabled\": {},\n  \"default_panel\": \"{}\",\n  \"transparent_bg\": {},\n    \"keybindings\": {}\n}}",
+            self.tick_rate_ms, self.volume, cc_escaped, theme_escaped, self.visualizer_enabled, default_panel_escaped, self.transparent_bg, kb_json
         );
         let _ = fs::write(&self.path, json);
     }

@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::core::app::App;
 use crate::storage::config::keycode_to_string;
 
 use ratatui::{

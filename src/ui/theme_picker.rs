@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::core::app::App;
 use crate::ui::themes::Theme;
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -13,7 +13,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let total = themes.len();
 
     let popup_w: u16 = 40_u16.min(area.width);
-    let popup_h: u16 = (total as u16 + 8).min(area.height);
+    let popup_h: u16 = (total as u16 + 12).min(area.height);
     let x = area.x + area.width.saturating_sub(popup_w) / 2;
     let y = area.y + area.height.saturating_sub(popup_h) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
@@ -25,6 +25,15 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         "🎨  Select Theme",
         Style::default().fg(app.theme.accent).add_modifier(Modifier::BOLD),
     )));
+    lines.push(Line::from(vec![
+        Span::styled("   Transparent bg: ", Style::default().fg(app.theme.text_muted)),
+        Span::styled(
+            if app.transparent_bg { "on" } else { "off" },
+            Style::default()
+                .fg(if app.transparent_bg { app.theme.positive } else { app.theme.text_muted })
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
     lines.push(Line::from(""));
 
     for (i, theme) in themes.iter().enumerate() {
@@ -73,6 +82,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" apply  ", Style::default().fg(app.theme.text_muted)),
         Span::styled("Esc", Style::default().fg(app.theme.positive).add_modifier(Modifier::BOLD)),
         Span::styled(" close", Style::default().fg(app.theme.text_muted)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  b", Style::default().fg(app.theme.positive).add_modifier(Modifier::BOLD)),
+        Span::styled(" toggle transparent bg", Style::default().fg(app.theme.text_muted)),
     ]));
 
     let block = Block::default()

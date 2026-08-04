@@ -11,6 +11,29 @@ pub enum ActivePanel {
     History,
 }
 
+impl ActivePanel {
+    /// Cycle order used both by the in-app Tab key and the boot-menu default-panel picker.
+    pub const ALL: [ActivePanel; 3] = [ActivePanel::Stations, ActivePanel::Favorites, ActivePanel::History];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActivePanel::Stations => "Stations",
+            ActivePanel::Favorites => "Favorites",
+            ActivePanel::History => "History",
+        }
+    }
+
+    /// Parses a config value, falling back to Stations for anything unrecognized
+    /// (covers missing config, first run, or a hand-edited/corrupted config.json).
+    pub fn from_config_str(s: &str) -> ActivePanel {
+        match s {
+            "Favorites" => ActivePanel::Favorites,
+            "History" => ActivePanel::History,
+            _ => ActivePanel::Stations,
+        }
+    }
+}
+
 #[derive(PartialEq, Clone)]
 pub enum Overlay {
     None,

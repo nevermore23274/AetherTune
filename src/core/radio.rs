@@ -13,6 +13,11 @@ pub enum FetchResult {
         stations: Vec<radiobrowser::ApiStation>,
         query: QueryKind,
         message: String,
+        /// True for user-initiated fetches (genre switch, search) — these should
+        /// jump the user to the Stations panel and show a status toast.
+        /// False for the silent startup preload, which must never yank the user
+        /// off whatever panel they landed on (e.g. Favorites) or narrate itself.
+        switch_to_stations: bool,
     },
     /// Append to the current station list (load more)
     Append {

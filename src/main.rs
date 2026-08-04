@@ -1,4 +1,3 @@
-pub mod app;
 pub mod audio;
 pub mod core;
 pub mod input;
@@ -18,6 +17,11 @@ use std::time::{Duration, Instant};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
+
+    // Resolve the storage directory before anything else touches it — the
+    // boot menu's Settings screen calls Config::load() before App::new runs.
+    storage::paths::resolve_and_set(&args);
+
     let skip_menu = args.iter().any(|a| a == "--skip-menu" || a == "-s");
 
     // Parse boot speed: --boot-speed=fast|normal|slow|off (default: normal)
@@ -70,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Construct the app immediately with an empty station list.
     // The initial fetch runs in the background — stations appear once it completes.
-    let mut app = app::App::new(Vec::new());
+    let mut app = core::app::App::new(Vec::new());
     // If visualizer is disabled, start in low-power mode
     if !app.visualizer_enabled {
         app.tick_rate_ms = 200;

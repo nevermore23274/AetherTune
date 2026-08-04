@@ -1,4 +1,5 @@
-use crate::app::{App, InputMode};
+use crate::core::app::App;
+use crate::core::types::{ActivePanel, InputMode};
 
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -59,11 +60,20 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             format!("  │  vis: off ({})", vis_key)
         };
 
+        // Genre only means something on the Stations panel — Favorites/History
+        // aren't filtered by it, so showing it there just implies a filter
+        // that isn't actually being applied.
+        let panel_label = if app.active_panel == ActivePanel::Stations {
+            format!("  Genre: {}", cat)
+        } else {
+            format!("  Panel: {}", app.active_panel.as_str())
+        };
+
         let line = Line::from(vec![
             Span::styled(" ", Style::default()),
             playing_indicator,
             Span::styled(
-                format!("  Genre: {}", cat),
+                panel_label,
                 Style::default().fg(app.theme.accent),
             ),
             Span::styled(

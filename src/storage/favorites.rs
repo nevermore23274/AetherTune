@@ -17,12 +17,7 @@ pub struct FavoritesStore {
 
 impl FavoritesStore {
     fn storage_path() -> PathBuf {
-        let base = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        let mut path = PathBuf::from(base);
-        path.push(".aethertune");
-        fs::create_dir_all(&path).ok();
+        let mut path = crate::storage::paths::base_dir();
         path.push("favorites.json");
         path
     }

@@ -1,4 +1,5 @@
-use crate::app::{ActivePanel, App};
+use crate::core::app::App;
+use crate::core::types::ActivePanel;
 use super::helpers::truncate_str;
 use ratatui::{
     style::{Color, Modifier, Style},

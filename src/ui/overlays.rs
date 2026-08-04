@@ -1,4 +1,5 @@
-use crate::app::{ActivePanel, App};
+use crate::core::app::App;
+use crate::core::types::ActivePanel;
 use crate::storage::config::binding_display;
 use super::helpers::{help_line_themed, info_line, centered_rect};
 use ratatui::{

@@ -38,6 +38,20 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// When `transparent` is true, clears the whole-window backgrounds
+    /// (`bg_dark`, `bg_panel`) to `Color::Reset` so the terminal's own
+    /// background — and its transparency, if the terminal emulator provides
+    /// it (e.g. kitty, alacritty) — shows through instead. `bg_highlight` is
+    /// deliberately left untouched: selected/highlighted rows need to stay
+    /// visually distinct from the transparent background to remain readable.
+    pub fn with_transparency(mut self, transparent: bool) -> Self {
+        if transparent {
+            self.bg_dark = Color::Reset;
+            self.bg_panel = Color::Reset;
+        }
+        self
+    }
+
     pub fn all() -> Vec<Theme> {
         vec![
             Self::crt(),
