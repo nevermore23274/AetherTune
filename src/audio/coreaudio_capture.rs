@@ -176,7 +176,7 @@ fn capture_loop(analysis: &SharedAnalysis, stop: &AtomicBool) -> Result<(), Stri
     unsafe { tap_description.setName(&tap_name) };
 
     let mut tap_id: AudioObjectID = ca::kAudioObjectUnknown;
-    let status = unsafe { AudioHardwareCreateProcessTap(&tap_description, &mut tap_id) };
+    let status = unsafe { AudioHardwareCreateProcessTap(Some(&tap_description), &mut tap_id) };
     if status != 0 {
         return Err(format!("AudioHardwareCreateProcessTap failed: {status}"));
     }
@@ -199,8 +199,9 @@ fn capture_loop(analysis: &SharedAnalysis, stop: &AtomicBool) -> Result<(), Stri
     let aggregate_dict = build_aggregate_device_dict(&aggregate_uid, &output_uid, &tap_uid);
 
     let mut aggregate_id: AudioObjectID = ca::kAudioObjectUnknown;
-    let status =
-        unsafe { AudioHardwareCreateAggregateDevice(&aggregate_dict, &mut aggregate_id) };
+    let status = unsafe {
+        AudioHardwareCreateAggregateDevice(aggregate_dict.as_ref(), (&mut aggregate_id).into())
+    };
     if status != 0 {
         return Err(format!("AudioHardwareCreateAggregateDevice failed: {status}"));
     }
@@ -222,7 +223,7 @@ fn capture_loop(analysis: &SharedAnalysis, stop: &AtomicBool) -> Result<(), Stri
             aggregate_id,
             Some(io_proc),
             state_ptr as *mut c_void,
-            &mut ioproc_id,
+            (&mut ioproc_id).into(),
         )
     };
     if status != 0 {
@@ -324,7 +325,14 @@ fn get_default_output_device() -> Result<AudioObjectID, String> {
     let out = NonNull::new(&mut device_id as *mut AudioObjectID as *mut c_void)
         .ok_or("null output pointer")?;
     let status = unsafe {
-        AudioObjectGetPropertyData(ca::kAudioObjectSystemObject, &address, 0, std::ptr::null(), &mut size, out)
+        AudioObjectGetPropertyData(
+            ca::kAudioObjectSystemObject as AudioObjectID,
+            (&address).into(),
+            0,
+            std::ptr::null(),
+            (&mut size).into(),
+            out,
+        )
     };
     if status != 0 {
         return Err(format!("failed to read default output device: {status}"));
@@ -343,7 +351,7 @@ fn get_device_uid(device_id: AudioObjectID) -> Result<String, String> {
     let out = NonNull::new(&mut cf_string_ptr as *mut *const CFString as *mut c_void)
         .ok_or("null output pointer")?;
     let status = unsafe {
-        AudioObjectGetPropertyData(device_id, &address, 0, std::ptr::null(), &mut size, out)
+        AudioObjectGetPropertyData(device_id, (&address).into(), 0, std::ptr::null(), (&mut size).into(), out)
     };
     if status != 0 {
         return Err(format!("failed to read device UID: {status}"));
