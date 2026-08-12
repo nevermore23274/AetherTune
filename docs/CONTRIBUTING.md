@@ -39,7 +39,7 @@ sudo apt install mpv pulseaudio-utils
 brew install mpv
 ```
 
-Audio visualization runs in simulated mode on macOS (real-time capture is not yet implemented).
+On macOS 14.4 (Sonoma) or later, real-time audio visualization works out of the box via a Core Audio process tap — no additional software needed. On older macOS it falls back to simulated mode.
 
 **Windows:**
 - `mpv.exe` — must be in the same directory as the AetherTune binary, or in your `PATH`
@@ -104,7 +104,8 @@ src/
 │   ├── seqlock.rs            Generic lock-free SeqLock<T: Copy>
 │   ├── visualizer.rs         Bar animation (real + simulated modes)
 │   ├── wasapi_capture.rs     WASAPI loopback capture (Windows only)
-│   └── jobobject.rs          Win32 Job Object for mpv lifecycle (Windows only)
+│   ├── jobobject.rs          Win32 Job Object for mpv lifecycle (Windows only)
+│   └── coreaudio_capture.rs  Core Audio process-tap capture (macOS 14.4+ only)
 ├── storage/
 │   ├── config.rs             Settings + keybindings (hand-rolled JSON)
 │   ├── favorites.rs          Favorites persistence
@@ -119,8 +120,8 @@ src/
 Key things to know about the codebase:
 - **No serde.** JSON serialization/parsing is hand-rolled in `storage/` to keep the dependency tree minimal. If you add a new config field, you'll need to extend the parser manually.
 - **Re-export facade.** `src/app.rs` re-exports types from `core/*` so that all UI modules can use `use crate::app::{App, Overlay, ...}` without knowing about the internal module structure.
-- **Platform gating** uses `#[cfg(unix)]` and `#[cfg(windows)]`. macOS falls under `#[cfg(unix)]`. Windows-specific modules (`wasapi_capture.rs`, `jobobject.rs`) are gated at the module level in `audio/mod.rs`.
-- **Audio capture** is platform-specific at runtime: `parec` on Linux (detected at startup, falls back to simulated if missing), WASAPI loopback on Windows (built-in, no external tools). Both feed into the same FFT pipeline in `fft.rs` and publish results through the `SeqLock` in `seqlock.rs`.
+- **Platform gating** uses `#[cfg(unix)]`, `#[cfg(target_os = "linux")]`, `#[cfg(target_os = "macos")]`, and `#[cfg(windows)]`. `#[cfg(unix)]` is for logic shared by Linux and macOS (mpv's IPC socket); `#[cfg(target_os = "linux")]` / `#[cfg(target_os = "macos")]` are for their respective capture backends, which differ (FIFO + external process vs. an in-process Core Audio tap). Platform-specific modules (`wasapi_capture.rs`, `jobobject.rs`, `coreaudio_capture.rs`) are gated at the module level in `audio/mod.rs`.
+- **Audio capture** is platform-specific at runtime: `parec` on Linux (detected at startup, falls back to simulated if missing), a Core Audio process tap on macOS 14.4+ (version-checked at startup via `sw_vers` before any tap API is referenced, falls back to simulated on older macOS or if unavailable), WASAPI loopback on Windows (built-in, no external tools). All three feed into the same FFT pipeline in `fft.rs` and publish results through the `SeqLock` in `seqlock.rs`.
 
 ## Making Changes
 

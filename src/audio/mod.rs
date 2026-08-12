@@ -8,3 +8,6 @@ pub mod visualizer;
 pub mod wasapi_capture;
 #[cfg(windows)]
 pub mod jobobject;
+
+#[cfg(target_os = "macos")]
+pub mod coreaudio_capture;

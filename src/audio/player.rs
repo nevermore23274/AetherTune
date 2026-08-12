@@ -4,16 +4,16 @@ use std::path::PathBuf;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::audio::pipe as audio_pipe;
 use crate::audio::pipe::SharedAnalysis;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::sync::Arc;
 
 pub struct StreamInfo {
@@ -72,14 +72,14 @@ impl StreamInfo {
 pub struct Player {
     /// mpv process for actual audio playback
     process: Option<std::process::Child>,
-    /// parec process that captures the PulseAudio monitor for visualization (Unix only)
-    #[cfg(unix)]
+    /// parec process that captures the PulseAudio monitor for visualization (Linux only)
+    #[cfg(target_os = "linux")]
     capture: Option<std::process::Child>,
-    /// FIFO reader thread (Unix only)
-    #[cfg(unix)]
+    /// FIFO reader thread (Linux only)
+    #[cfg(target_os = "linux")]
     reader_handle: Option<std::thread::JoinHandle<()>>,
-    /// FIFO path for parec -> reader communication (Unix only)
-    #[cfg(unix)]
+    /// FIFO path for parec -> reader communication (Linux only)
+    #[cfg(target_os = "linux")]
     fifo_path: Option<PathBuf>,
     /// WASAPI loopback capture thread (Windows only)
     #[cfg(windows)]
@@ -87,21 +87,31 @@ pub struct Player {
     /// Stop flag for the WASAPI capture thread (Windows only)
     #[cfg(windows)]
     capture_stop: Arc<AtomicBool>,
+    /// Core Audio process-tap capture thread (macOS only)
+    #[cfg(target_os = "macos")]
+    capture_handle: Option<std::thread::JoinHandle<()>>,
+    /// Stop flag for the Core Audio capture thread (macOS only)
+    #[cfg(target_os = "macos")]
+    capture_stop: Arc<AtomicBool>,
     /// Job Object that ensures mpv.exe dies when AetherTune exits (Windows only)
     #[cfg(windows)]
     job_object: Option<crate::audio::jobobject::JobObject>,
     socket_path: PathBuf,
-    /// IPC stream to mpv (Unix socket on Linux)
+    /// IPC stream to mpv (Unix socket on Linux and macOS)
     #[cfg(unix)]
     stream: Option<UnixStream>,
     pub analysis: SharedAnalysis,
-    /// Legacy audio level for fallback mode (no parec)
+    /// Legacy audio level for fallback mode (no real capture backend)
     pub audio_level: f64,
     pub media_title: Option<String>,
     request_counter: u64,
-    /// Whether parec is available for real audio capture (unix only)
-    #[cfg(unix)]
+    /// Whether parec is available for real audio capture (Linux only)
+    #[cfg(target_os = "linux")]
     has_parec: bool,
+    /// Whether this system supports Core Audio process taps, i.e. macOS
+    /// 14.4+ (macOS only)
+    #[cfg(target_os = "macos")]
+    has_coreaudio_tap: bool,
     /// Real-time stream information from mpv
     pub stream_info: StreamInfo,
     /// Whether the visualizer is enabled (controls capture startup)
@@ -113,7 +123,7 @@ impl Player {
         let socket_path =
             std::env::temp_dir().join(format!("aethertune-mpv-{}", std::process::id()));
 
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         let has_parec = std::process::Command::new("parec")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -121,17 +131,24 @@ impl Player {
             .status()
             .is_ok();
 
+        #[cfg(target_os = "macos")]
+        let has_coreaudio_tap = crate::audio::coreaudio_capture::taps_supported();
+
         Self {
             process: None,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             capture: None,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             reader_handle: None,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             fifo_path: None,
             #[cfg(windows)]
             capture_handle: None,
             #[cfg(windows)]
+            capture_stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "macos")]
+            capture_handle: None,
+            #[cfg(target_os = "macos")]
             capture_stop: Arc::new(AtomicBool::new(false)),
             #[cfg(windows)]
             job_object: crate::audio::jobobject::JobObject::new(),
@@ -142,8 +159,10 @@ impl Player {
             audio_level: 0.0,
             media_title: None,
             request_counter: 0,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             has_parec,
+            #[cfg(target_os = "macos")]
+            has_coreaudio_tap,
             stream_info: StreamInfo::new(),
             visualizer_enabled: true,
         }
@@ -151,10 +170,12 @@ impl Player {
 
     /// Returns true if we have real audio analysis running
     pub fn has_real_audio(&self) -> bool {
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         { self.capture.is_some() }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         { self.capture_handle.is_some() }
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+        { false }
     }
 
     pub fn play_url(&mut self, url: &str, volume: u32) -> bool {
@@ -195,9 +216,15 @@ impl Player {
                     std::thread::sleep(std::time::Duration::from_millis(400));
                     self.connect_ipc();
 
-                    // Start audio capture for visualization if parec is available and visualizer is on
-                    #[cfg(unix)]
+                    // Start audio capture for visualization if a capture
+                    // backend is available on this platform and the
+                    // visualizer is on
+                    #[cfg(target_os = "linux")]
                     if self.has_parec && self.visualizer_enabled {
+                        self.start_capture();
+                    }
+                    #[cfg(target_os = "macos")]
+                    if self.has_coreaudio_tap && self.visualizer_enabled {
                         self.start_capture();
                     }
                 }
@@ -217,7 +244,7 @@ impl Player {
     }
 
     /// Start parec to capture the PulseAudio/PipeWire monitor source.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn start_capture(&mut self) {
         let fifo = audio_pipe::fifo_path();
 
@@ -271,7 +298,19 @@ impl Player {
         self.capture_handle = Some(handle);
     }
 
-    #[cfg(unix)]
+    /// Start Core Audio process-tap capture for real-time audio visualization.
+    #[cfg(target_os = "macos")]
+    fn start_capture(&mut self) {
+        // Reset the stop flag and spawn the capture thread
+        self.capture_stop.store(false, Ordering::Relaxed);
+        let handle = crate::audio::coreaudio_capture::spawn_capture_thread(
+            self.analysis.clone(),
+            self.capture_stop.clone(),
+        );
+        self.capture_handle = Some(handle);
+    }
+
+    #[cfg(target_os = "linux")]
     fn stop_capture(&mut self) {
         if let Some(mut cap) = self.capture.take() {
             unsafe {
@@ -302,7 +341,7 @@ impl Player {
         self.analysis.write(crate::audio::pipe::AudioAnalysis::new());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     fn stop_capture(&mut self) {
         // Signal the capture thread to stop
         self.capture_stop.store(true, Ordering::Relaxed);
@@ -327,34 +366,26 @@ impl Player {
 
     /// Stop audio capture if it's currently running (called when visualizer is disabled)
     pub fn stop_capture_if_running(&mut self) {
-        #[cfg(unix)]
-        {
-            if self.capture.is_some() {
-                self.stop_capture();
-            }
-        }
-        #[cfg(windows)]
-        {
-            if self.capture_handle.is_some() {
-                self.stop_capture();
-            }
+        if self.has_real_audio() {
+            self.stop_capture();
         }
     }
 
     /// Restart audio capture (called when visualizer is re-enabled while playing)
     pub fn restart_capture(&mut self) {
-        #[cfg(unix)]
-        {
-            if self.has_parec && self.capture.is_none() && self.process.is_some() {
-                self.start_capture();
-            }
+        if self.has_real_audio() || self.process.is_none() {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if self.has_parec {
+            self.start_capture();
+        }
+        #[cfg(target_os = "macos")]
+        if self.has_coreaudio_tap {
+            self.start_capture();
         }
         #[cfg(windows)]
-        {
-            if self.capture_handle.is_none() && self.process.is_some() {
-                self.start_capture();
-            }
-        }
+        self.start_capture();
     }
 
     #[cfg(unix)]
@@ -605,7 +636,7 @@ impl Drop for Player {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

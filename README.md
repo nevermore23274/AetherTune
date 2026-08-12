@@ -19,7 +19,7 @@ AetherTune is a TUI (terminal user interface) application that lets you browse, 
 
 - **Station browsing** — browse thousands of stations via the RadioBrowser API, filter by genre, search by name. Results are sorted by popularity with broken streams and spam filtered out automatically
 - **Local blending** — optionally configure your country code in Settings to blend ~30% local stations into every genre and search result, interleaved naturally with global results
-- **Real-time audio visualization** — 16-band spectrum analyzer using a sliding-window radix-2 FFT (~94 updates/sec) with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity. On Linux, audio is captured via PulseAudio/PipeWire monitor; on Windows, via WASAPI loopback
+- **Real-time audio visualization** — 16-band spectrum analyzer using a sliding-window radix-2 FFT (~94 updates/sec) with CAVA-inspired gravity fall-off, integral smoothing, and automatic sensitivity. On Linux, audio is captured via PulseAudio/PipeWire monitor; on Windows, via WASAPI loopback; on macOS 14.4+, via a Core Audio process tap
 - **Song log** — automatically tracks song changes from ICY stream metadata with timestamps
 - **Stream health monitor** — live bitrate (actual vs advertised), buffer status, codec info, connection uptime
 - **Favorites & history** — save stations, track listening history, persisted to JSON
@@ -27,11 +27,11 @@ AetherTune is a TUI (terminal user interface) application that lets you browse, 
 - **Customizable keybindings** — remap every keyboard shortcut from the in-app settings overlay, persisted to your config
 - **Color themes** — 8 built-in themes (CRT, Gruvbox, Nord, Dracula, Monokai, Catppuccin, Hacker, Solarized) with live preview, and an optional transparent background mode that works with any theme
 - **Built-in profiler** — per-frame timing breakdown for performance tuning
-- **Fallback mode** — simulated visualizer when audio capture isn't available (e.g. macOS, or Linux without PulseAudio)
+- **Fallback mode** — simulated visualizer when audio capture isn't available (e.g. Linux without PulseAudio, or macOS older than 14.4)
 
 ### Optional
 
-- Without `parec` (Linux), the app falls back to a simulated visualizer — everything else works normally.
+- Without `parec` (Linux) or macOS 14.4+ (Sonoma or later), the app falls back to a simulated visualizer — everything else works normally.
 
 ## Installation
 
@@ -73,7 +73,7 @@ brew install aethertune
 
 This will automatically install `mpv` as a dependency. On Linux, you'll additionally need `pulseaudio-utils` (or `pipewire-pulse`) for real-time audio visualization.
 
-> **macOS note:** Audio visualization uses a simulated mode (no real-time audio capture yet). Playback, station browsing, favorites, and all other features work normally.
+> **macOS note:** Real-time audio visualization requires macOS 14.4 (Sonoma) or later and works out of the box — no additional software or setup needed beyond a one-time system prompt asking to allow audio capture. On older macOS the visualizer falls back to simulated mode; playback, station browsing, favorites, and all other features work normally either way.
 
 </details>
 
@@ -96,7 +96,7 @@ tar xzf AetherTune-VERSION-macos-x86_64.tar.gz
 
 Replace `VERSION` with the actual tag (e.g. `v0.9.0`). You'll need `mpv` installed, if you have [Homebrew](https://brew.sh/): `brew install mpv`.
 
-> **macOS note:** Audio visualization uses a simulated mode. Playback and all other features work normally.
+> **macOS note:** Real-time audio visualization requires macOS 14.4 (Sonoma) or later and works out of the box — no additional software needed. On older macOS the visualizer falls back to simulated mode; playback and all other features work normally either way.
 
 </details>
 
@@ -145,7 +145,7 @@ home.packages = [ inputs.AetherTune.packages.${system}.aethertune ];
 <details>
 <summary><b>Linux / macOS — From source</b></summary>
 
-Requires Rust 1.85+ and `mpv`. On Linux, you'll also need `pulseaudio-utils` or `pipewire-pulse` for real-time audio visualization.
+Requires Rust 1.85+ and `mpv`. On Linux, you'll also need `pulseaudio-utils` or `pipewire-pulse` for real-time audio visualization. On macOS 14.4+, real-time visualization works out of the box (no extra packages).
 
 ```bash
 git clone https://github.com/nevermore23274/aethertune.git
@@ -355,21 +355,21 @@ src/
 
 ### Audio visualization pipeline
 
-AetherTune captures real audio for visualization on both Linux and Windows. The platform-specific capture feeds into a shared FFT and visualization pipeline.
+AetherTune captures real audio for visualization on Linux, macOS 14.4+, and Windows. The platform-specific capture feeds into a shared FFT and visualization pipeline.
 
 **Linux (PulseAudio/PipeWire):** `mpv` plays audio normally. `parec` captures the monitor source and writes raw s16le stereo 48kHz PCM to a named FIFO. A background thread reads the FIFO using a sliding window.
 
+**macOS 14.4+ (Core Audio process tap):** `mpv` plays audio normally. At startup, AetherTune builds an unmuted, private, system-wide `CATapDescription` (mixes every process's output down to stereo without silencing it) via `AudioHardwareCreateProcessTap`, aggregates that tap with the current default output device purely to anchor its clock via `AudioHardwareCreateAggregateDevice`, and registers an `AudioDeviceIOProc` callback that receives PCM frames directly — no external driver, no shell-out, no user setup beyond a one-time system permission prompt. On macOS older than 14.4 (where this API doesn't exist), capture is skipped entirely and the simulated visualizer takes over; the version check happens before any tap API is ever referenced, so older systems never risk touching a missing symbol.
+
 **Windows (WASAPI):** `mpv` plays audio normally. A background thread opens the default output device in WASAPI loopback mode and reads whatever is playing through the speakers. No external tools or user configuration needed as WASAPI is built into Windows since Vista.
 
-**Shared pipeline (both platforms):** 512 new samples (~10.7ms) are shifted into a 1024-sample buffer, then an in-place radix-2 Cooley-Tukey FFT with Hann windowing produces ~94 updates/sec. The 512 frequency bins are grouped into 16 logarithmically-spaced bands (50Hz–10kHz) with perceptual weighting. FFT buffers, window coefficients, and band edges are all pre-allocated at thread startup for zero per-frame heap allocation.
+**Shared pipeline (all platforms):** 512 new samples (~10.7ms) are shifted into a 1024-sample buffer, then an in-place radix-2 Cooley-Tukey FFT with Hann windowing produces ~94 updates/sec. The 512 frequency bins are grouped into 16 logarithmically-spaced bands (50Hz–10kHz) with perceptual weighting. FFT buffers, window coefficients, and band edges are all pre-allocated at thread startup for zero per-frame heap allocation.
 
-Band energies and RMS are published via a lock-free sequence lock (`SeqLock<AudioAnalysis>`). The reader thread writes without blocking, and the render thread always reads the latest consistent snapshot with no contention.
+Band energies and RMS are published via a lock-free sequence lock (`SeqLock<AudioAnalysis>`). The reader thread (or, on macOS, the Core Audio IOProc callback) writes without blocking, and the render thread always reads the latest consistent snapshot with no contention.
 
 The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelerating drop), integral smoothing (weighted running average), and automatic sensitivity adjustment.
 
-**macOS:** Falls back to a simulated visualizer (animated based on audio activity detected via mpv IPC). Real-time capture is not yet implemented.
-
-**Process management:** On Linux, `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes. On Windows, `mpv.exe` is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, ensuring it is terminated automatically when AetherTune exits, even on crash or forced close.
+**Process management:** On Linux, `parec` runs in its own process group via `setsid()`, and cleanup uses `kill(-pgid, SIGTERM)` to ensure no orphaned processes. On macOS, the tap, aggregate device, and IOProc are torn down in strict reverse order (IOProc stopped and destroyed first, guaranteeing no in-flight callback, then the aggregate device, then the tap) whenever playback stops or the visualizer is toggled off. On Windows, `mpv.exe` is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, ensuring it is terminated automatically when AetherTune exits, even on crash or forced close.
 
 ### Data persistence
 
