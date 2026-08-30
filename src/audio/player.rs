@@ -97,9 +97,22 @@ pub struct Player {
     #[cfg(windows)]
     job_object: Option<crate::audio::jobobject::JobObject>,
     socket_path: PathBuf,
-    /// IPC stream to mpv (Unix socket on Linux and macOS)
+    /// IPC stream to mpv (Unix socket on Linux and macOS) — used for writing commands
     #[cfg(unix)]
     stream: Option<UnixStream>,
+    /// Buffered reader over a cloned handle to the same IPC socket, kept
+    /// alive across ticks so partial lines aren't dropped between polls
+    /// and so we're not dup()'ing the fd + allocating a fresh buffer
+    /// every tick.
+    #[cfg(unix)]
+    reader: Option<BufReader<UnixStream>>,
+    /// In-progress line for the reader above. `read_line` appends to
+    /// whatever's already here, so a line that's only half-arrived when
+    /// we hit WouldBlock stays put until the next poll completes it —
+    /// this must be a field (not a local in `poll()`) or the partial
+    /// bytes are lost the moment the local goes out of scope.
+    #[cfg(unix)]
+    line_buf: String,
     pub analysis: SharedAnalysis,
     /// Legacy audio level for fallback mode (no real capture backend)
     pub audio_level: f64,
@@ -155,6 +168,10 @@ impl Player {
             socket_path,
             #[cfg(unix)]
             stream: None,
+            #[cfg(unix)]
+            reader: None,
+            #[cfg(unix)]
+            line_buf: String::new(),
             analysis,
             audio_level: 0.0,
             media_title: None,
@@ -397,6 +414,12 @@ impl Player {
                     stream
                         .set_read_timeout(Some(std::time::Duration::from_millis(5)))
                         .ok();
+
+                    // Clone once here (not per-tick) so writes go through
+                    // `stream` and reads go through a persistent BufReader
+                    // over the clone — the buffer survives across polls
+                    // instead of being thrown away every tick.
+                    self.reader = stream.try_clone().ok().map(BufReader::new);
                     self.stream = Some(stream);
 
                     self.send_command(
@@ -470,40 +493,70 @@ impl Player {
                 );
             }
 
-            if self.stream.is_none() {
+            if self.reader.is_none() {
                 return;
             }
 
-            let stream = match self.stream.as_ref().and_then(|s| s.try_clone().ok()) {
-                Some(s) => s,
-                None => return,
-            };
-
-            let reader = BufReader::new(stream);
             let mut new_title: Option<String> = None;
             let mut got_audio_pts = false;
+            let mut stream_closed = false;
+            let mut completed_lines: Vec<String> = Vec::new();
 
-            for line in reader.lines() {
-                match line {
-                    Ok(text) => {
-                        if let Some(title) = Self::extract_media_title(&text) {
-                            if !title.is_empty() {
-                                new_title = Some(title);
+            // read_line() appends to self.line_buf rather than a fresh
+            // local, and we only clear it once a full line (ending in
+            // '\n') has actually arrived. If we hit WouldBlock partway
+            // through a line, the bytes read so far stay in
+            // self.line_buf and get completed on a later tick instead
+            // of being thrown away.
+            {
+                let reader = self.reader.as_mut().unwrap();
+                loop {
+                    match reader.read_line(&mut self.line_buf) {
+                        Ok(0) => {
+                            // EOF — mpv closed the socket
+                            stream_closed = true;
+                            break;
+                        }
+                        Ok(_) => {
+                            if self.line_buf.ends_with('\n') {
+                                completed_lines.push(self.line_buf.trim_end().to_string());
+                                self.line_buf.clear();
+                            } else {
+                                // Socket closed mid-line with no trailing
+                                // newline — nothing more is coming.
+                                stream_closed = true;
+                                break;
                             }
                         }
-
-                        if text.contains("\"request_id\":100") || text.contains("\"request_id\": 100")
-                        {
-                            if text.contains("\"data\":") && !text.contains("\"error\"") {
-                                got_audio_pts = true;
-                            }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(_) => {
+                            stream_closed = true;
+                            break;
                         }
-
-                        self.parse_stream_info(&text);
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => break,
                 }
+            }
+
+            for text in &completed_lines {
+                if let Some(title) = Self::extract_media_title(text) {
+                    if !title.is_empty() {
+                        new_title = Some(title);
+                    }
+                }
+
+                if text.contains("\"request_id\":100") || text.contains("\"request_id\": 100") {
+                    if text.contains("\"data\":") && !text.contains("\"error\"") {
+                        got_audio_pts = true;
+                    }
+                }
+
+                self.parse_stream_info(text);
+            }
+
+            if stream_closed {
+                self.stream = None;
+                self.reader = None;
+                self.line_buf.clear();
             }
 
             if let Some(title) = new_title {
@@ -608,7 +661,11 @@ impl Player {
 
     pub fn stop(&mut self) {
         #[cfg(unix)]
-        { self.stream = None; }
+        {
+            self.stream = None;
+            self.reader = None;
+            self.line_buf.clear();
+        }
 
         // Stop audio capture first
         self.stop_capture();
