@@ -558,14 +558,7 @@ impl App {
                         .map(|np| np.name.clone())
                         .unwrap_or_default();
 
-                    // Get timestamp via date command
-                    let timestamp = std::process::Command::new("date")
-                        .arg("+%H:%M")
-                        .output()
-                        .ok()
-                        .and_then(|o| String::from_utf8(o.stdout).ok())
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_default();
+                    let timestamp = chrono::Local::now().format("%H:%M").to_string();
 
                     self.song_log.insert(
                         0,
