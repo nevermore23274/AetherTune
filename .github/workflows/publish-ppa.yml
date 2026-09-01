@@ -76,7 +76,7 @@ jobs:
             # Update changelog for this series
             cd "aethertune-${VERSION}"
             cat > debian/changelog <<CHLOG
-          aethertune (${VERSION}-ppa1~${SERIES}) ${SERIES}; urgency=medium
+          aethertune (${VERSION}-ppa2~${SERIES}) ${SERIES}; urgency=medium
 
             * Release v${VERSION}
 
@@ -94,7 +94,7 @@ jobs:
 
             # Upload to PPA
             cd "${WORKDIR}"
-            dput ppa:patchgoblin/aethertune "aethertune_${VERSION}-ppa1~${SERIES}_source.changes"
+            dput ppa:patchgoblin/aethertune "aethertune_${VERSION}-ppa2~${SERIES}_source.changes"
 
             cd "${STARTDIR}"
           done
