@@ -229,8 +229,10 @@ impl Player {
 
                 #[cfg(unix)]
                 {
-                    // Give mpv a moment to start and create the IPC socket
-                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    // connect_ipc() now polls at a short interval starting
+                    // immediately, so we connect as soon as mpv actually
+                    // creates the socket instead of always eating a flat
+                    // 400ms up front regardless of how fast that happens.
                     self.connect_ipc();
 
                     // Start audio capture for visualization if a capture
@@ -407,7 +409,14 @@ impl Player {
 
     #[cfg(unix)]
     fn connect_ipc(&mut self) {
-        for _ in 0..5 {
+        // Poll frequently rather than in coarse steps, so we connect the
+        // moment mpv actually creates the socket instead of being capped
+        // by the retry interval. ~30 attempts * 50ms = 1.5s worst-case
+        // wait if mpv is unusually slow to start (similar ceiling to the
+        // old 400ms-sleep + 5*200ms-retry scheme), but typical startups
+        // — mpv usually creates the socket well under 100ms in — connect
+        // almost immediately instead of always eating the old flat delay.
+        for _ in 0..30 {
             match UnixStream::connect(&self.socket_path) {
                 Ok(stream) => {
                     stream.set_nonblocking(true).ok();
@@ -422,22 +431,18 @@ impl Player {
                     self.reader = stream.try_clone().ok().map(BufReader::new);
                     self.stream = Some(stream);
 
+                    // Batch all four setup commands into a single write —
+                    // one syscall instead of four on every connect.
                     self.send_command(
-                        r#"{ "command": ["observe_property", 1, "media-title"] }"#,
-                    );
-                    self.send_command(
-                        r#"{ "command": ["observe_property", 2, "audio-codec-name"] }"#,
-                    );
-                    self.send_command(
-                        r#"{ "command": ["observe_property", 3, "audio-params/samplerate"] }"#,
-                    );
-                    self.send_command(
-                        r#"{ "command": ["observe_property", 4, "audio-params/channel-count"] }"#,
+                        "{ \"command\": [\"observe_property\", 1, \"media-title\"] }\n\
+                         { \"command\": [\"observe_property\", 2, \"audio-codec-name\"] }\n\
+                         { \"command\": [\"observe_property\", 3, \"audio-params/samplerate\"] }\n\
+                         { \"command\": [\"observe_property\", 4, \"audio-params/channel-count\"] }",
                     );
                     return;
                 }
                 Err(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
         }

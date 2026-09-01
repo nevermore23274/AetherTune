@@ -895,8 +895,13 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
     let content = Paragraph::new(lines);
     f.render_widget(content, inner);
 
-    // Progress bar at bottom of box — synced with message timing
-    let progress = (elapsed as f64 / menu.timing.connect_done as f64).min(1.0);
+    // Progress bar at bottom of box, synced with message timing.
+    // The bar reaches 100% exactly when the last checkmark ("Launching ✓")
+    // appears, rather than at the screen's full duration. Otherwise the
+    // bar keeps crawling for a while after every checklist item already
+    // shows done, which reads as out of sync.
+    let last_msg_start = msgs.last().map(|&(_, t)| t).unwrap_or(menu.timing.connect_done);
+    let progress = (elapsed as f64 / last_msg_start.max(1) as f64).min(1.0);
     let bar_width = (box_width.saturating_sub(4)) as usize;
     let filled = (bar_width as f64 * progress) as usize;
     let empty = bar_width.saturating_sub(filled);

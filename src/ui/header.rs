@@ -46,20 +46,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
         let cat = app.categories[app.category_index];
 
-        use crate::storage::config::keycode_to_string;
-        let search_key = keycode_to_string(app.keybindings.search.primary);
-        let genre_key = keycode_to_string(app.keybindings.genre_picker.primary);
-        let theme_key = keycode_to_string(app.keybindings.theme_picker.primary);
-        let help_key = keycode_to_string(app.keybindings.help.primary);
-        let settings_key = keycode_to_string(app.keybindings.settings.primary);
-
-        let vis_key = keycode_to_string(app.keybindings.visualizer_toggle.primary);
-        let vis_status = if app.visualizer_enabled {
-            String::new()
-        } else {
-            format!("  │  vis: off ({})", vis_key)
-        };
-
         // Genre only means something on the Stations panel — Favorites/History
         // aren't filtered by it, so showing it there just implies a filter
         // that isn't actually being applied.
@@ -77,11 +63,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(app.theme.accent),
             ),
             Span::styled(
-                format!("  │  {} search  │  {} genre  │  {} theme  │  {} help  │  {} settings  │  {} vizualizer toggle", search_key, genre_key, theme_key, help_key, settings_key, vis_key),
+                app.header_hint.as_str(),
                 Style::default().fg(Color::Rgb(80, 80, 110)),
             ),
             Span::styled(
-                vis_status.clone(),
+                app.header_vis_status.as_str(),
                 Style::default().fg(app.theme.text_warn),
             ),
         ]);

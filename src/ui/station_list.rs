@@ -14,13 +14,20 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     // prefix markers (4)
     let name_budget = (area.width as usize).saturating_sub(10);
 
+    // Build the set of favorite URLs once per draw() call rather than
+    // linear-scanning app.favorites.entries for every station/history row
+    // (previously O(stations * favorites) string comparisons every single
+    // frame — this made it O(stations) hash lookups instead).
+    let favorite_urls: std::collections::HashSet<&str> =
+        app.favorites.entries.iter().map(|f| f.url.as_str()).collect();
+
     let (title, items, selected) = match app.active_panel {
         ActivePanel::Stations => {
             let items: Vec<ListItem> = app
                 .stations
                 .iter()
                 .map(|s| {
-                    let fav_marker = if app.is_favorite(&s.url) { "★ " } else { "  " };
+                    let fav_marker = if favorite_urls.contains(s.url.as_str()) { "★ " } else { "  " };
                     let playing_marker = app
                         .now_playing
                         .as_ref()
@@ -91,7 +98,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .entries
                 .iter()
                 .map(|h| {
-                    let fav_marker = if app.is_favorite(&h.url) { "★ " } else { "  " };
+                    let fav_marker = if favorite_urls.contains(h.url.as_str()) { "★ " } else { "  " };
                     let time_str = &h.played_at;
                     let line = Line::from(vec![
                         Span::styled(fav_marker, Style::default().fg(app.theme.text_warn)),
