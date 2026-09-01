@@ -143,9 +143,19 @@ Each frame records a `had_tick` flag indicating whether the IPC poll and visuali
 
 The sparkline records one CPU load sample per frame into a separate 40-entry ring buffer, displayed oldest-to-newest.
 
+### Station List Rendering
+
+The Stations and History panels mark favorited entries with a ★. This lookup builds a `HashSet` of favorite URLs once per `draw()` call rather than linear-scanning `app.favorites.entries` for every row with N stations loaded and M favorites, that's O(N) hash lookups per frame instead of O(N × M) string comparisons. This matters most after using "Load more" repeatedly, since the station list (unlike the always-small favorites/history lists) can grow into the hundreds over a session. This is part of what "Many stations loaded in the list" refers to under Draw cost above.
+
 ### Audio Reader (Sliding Window)
 
 The audio reader thread (Unix `parec` FIFO reader or Windows WASAPI loopback) uses a sliding window to maximize FFT update rate without sacrificing frequency resolution. Instead of reading a full 1024-sample chunk (~21ms at 48kHz) before running FFT, it reads 512 new samples (~10.7ms), shifts the 1024-sample buffer left, and runs FFT on the full window. This produces ~94 FFT updates/sec at 2× the rate of full-chunk reads while keeping the same 1024-point FFT resolution. The `fft_count` field on `AudioAnalysis` is incremented on each update, and the profiler computes the rate by sampling this counter every ~1 second.
+
+#### Considered: sliding DFT instead of full FFT recompute
+
+Since only half the 1024-sample window actually changes between steps, it's tempting to think a "true" incremental sliding DFT. Updating each frequency bin sample-by-sample via the standard recurrence `X_k[n] = (X_k[n-1] - x[n-N] + x[n]) * e^{j*2*pi*k/N}` which would be cheaper than recomputing the full FFT from scratch every step.
+
+Benchmarked with the actual FFT size (1024) and step size (512 new samples/update): the sliding DFT was **~16.5x slower** (293µs vs 18µs per update). The reason is fundamental, not an implementation issue: the sliding DFT's per-sample update is O(N) across all bins, and its efficiency advantage only exists when a fresh spectrum is needed on *every single incoming sample*. Here, a spectrum is only needed once per 512-sample step, so 512 individual O(N) updates (≈524K operations) cost far more than one O(N log N) FFT (≈10K operations). The current full-recompute-per-step design is the correct choice for this access pattern and not an oversight. This is left here so it isn't reinvestigated as a "missed" optimization later.
 
 ## Reference Benchmarks
 

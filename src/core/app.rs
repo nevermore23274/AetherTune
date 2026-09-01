@@ -76,6 +76,13 @@ pub struct App {
     /// When true, theme backgrounds are cleared so the terminal's own
     /// (possibly transparent) background shows through instead
     pub transparent_bg: bool,
+    /// Cached " │ X search │ Y genre │ ..." header hint string, rebuilt
+    /// only when keybindings actually change (via save_config()) rather
+    /// than reformatted from scratch every single frame.
+    pub header_hint: String,
+    /// Cached " │ vis: off (X)" suffix, empty when the visualizer is on.
+    /// Rebuilt alongside header_hint for the same reason.
+    pub header_vis_status: String,
 }
 
 impl App {
@@ -86,7 +93,7 @@ impl App {
         let mut player = Player::new(analysis.clone());
         player.visualizer_enabled = config.visualizer_enabled;
 
-        Self {
+        let mut app = Self {
             stations,
             selected_index: 0,
             player,
@@ -141,7 +148,39 @@ impl App {
             },
             visualizer_enabled: config.visualizer_enabled,
             transparent_bg: config.transparent_bg,
-        }
+            header_hint: String::new(),
+            header_vis_status: String::new(),
+        };
+        app.rebuild_header_hint();
+        app
+    }
+
+    /// Rebuild the cached header hint strings from current keybindings and
+    /// visualizer state. Every place that mutates keybindings or toggles
+    /// the visualizer already calls save_config() right afterward, so
+    /// hooking the rebuild there (rather than at each mutation site
+    /// individually) keeps this in sync without needing to remember to
+    /// invalidate it in five different places.
+    fn rebuild_header_hint(&mut self) {
+        use crate::storage::config::keycode_to_string;
+
+        let search_key = keycode_to_string(self.keybindings.search.primary);
+        let genre_key = keycode_to_string(self.keybindings.genre_picker.primary);
+        let theme_key = keycode_to_string(self.keybindings.theme_picker.primary);
+        let help_key = keycode_to_string(self.keybindings.help.primary);
+        let settings_key = keycode_to_string(self.keybindings.settings.primary);
+        let vis_key = keycode_to_string(self.keybindings.visualizer_toggle.primary);
+
+        self.header_hint = format!(
+            "  │  {} search  │  {} genre  │  {} theme  │  {} help  │  {} settings  │  {} vizualizer toggle",
+            search_key, genre_key, theme_key, help_key, settings_key, vis_key
+        );
+
+        self.header_vis_status = if self.visualizer_enabled {
+            String::new()
+        } else {
+            format!("  │  vis: off ({})", vis_key)
+        };
     }
 
     pub fn next(&mut self) {
@@ -328,7 +367,7 @@ impl App {
     }
 
     /// Persist current tick rate, volume, and keybindings to config file
-    pub fn save_config(&self) {
+    pub fn save_config(&mut self) {
         let mut config = Config::load();
         // Only save tick_rate_ms when visualizer is enabled — otherwise we'd
         // overwrite the user's preference with the low-power 200ms value
@@ -341,6 +380,13 @@ impl App {
         config.visualizer_enabled = self.visualizer_enabled;
         config.transparent_bg = self.transparent_bg;
         config.save();
+
+        // Keybindings and visualizer_enabled are the two inputs to the
+        // header hint, and every call site that mutates either of them
+        // calls save_config() right afterward — so rebuilding here keeps
+        // the cache correct without a separate invalidation call at each
+        // of those mutation sites.
+        self.rebuild_header_hint();
     }
 
     pub fn toggle_favorite(&mut self) {
