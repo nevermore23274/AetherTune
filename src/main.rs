@@ -2,6 +2,10 @@ pub mod audio;
 pub mod core;
 pub mod input;
 pub mod storage;
+// Only the connection test (Settings screen, --subsonic-test) uses this so
+// far; the browsing/playback API is wired into the UI in a later phase.
+#[allow(dead_code)]
+pub mod subsonic;
 pub mod ui;
 
 use crate::core::perf::FrameTiming;
@@ -21,6 +25,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the storage directory before anything else touches it — the
     // boot menu's Settings screen calls Config::load() before App::new runs.
     storage::paths::resolve_and_set(&args);
+
+    // Non-interactive check of subsonic.json + server connectivity.
+    if args.iter().any(|a| a == "--subsonic-test") {
+        std::process::exit(subsonic::run_connection_test().await);
+    }
 
     let skip_menu = args.iter().any(|a| a == "--skip-menu" || a == "-s");
 

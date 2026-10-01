@@ -11,6 +11,9 @@ use ratatui::{
 };
 use std::io;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
+
+use crate::subsonic::config::SubsonicConfig;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -145,6 +148,45 @@ enum MenuState {
     Connecting,
 }
 
+/// Focusable rows on the settings screen, in display order.
+#[derive(Clone, Copy, PartialEq)]
+enum SettingsField {
+    Country,
+    DefaultPanel,
+    SubsonicUrl,
+    SubsonicUser,
+    SubsonicPassword,
+    SubsonicTest,
+}
+
+impl SettingsField {
+    const ALL: [SettingsField; 6] = [
+        SettingsField::Country,
+        SettingsField::DefaultPanel,
+        SettingsField::SubsonicUrl,
+        SettingsField::SubsonicUser,
+        SettingsField::SubsonicPassword,
+        SettingsField::SubsonicTest,
+    ];
+
+    fn step(self, forward: bool) -> Self {
+        let all = Self::ALL;
+        let i = all.iter().position(|f| *f == self).unwrap_or(0);
+        let next = if forward { (i + 1) % all.len() } else { (i + all.len() - 1) % all.len() };
+        all[next]
+    }
+}
+
+/// Upper bound for the free-text Subsonic fields (URL, username, password).
+const SUBSONIC_FIELD_MAX: usize = 256;
+
+/// Outcome of the last "Test connection" on the settings screen.
+enum SubsonicStatus {
+    Testing,
+    Connected(String),
+    Failed(String),
+}
+
 struct MenuApp {
     selected: usize,
     state: MenuState,
@@ -156,6 +198,13 @@ struct MenuApp {
     settings_country: String,
     /// Which panel AetherTune opens to on launch, cycled with Left/Right on the settings screen
     settings_default_panel: crate::core::types::ActivePanel,
+    /// Focused row on the settings screen (Up/Down/Tab to move)
+    settings_field: SettingsField,
+    /// Subsonic server/credentials input buffers for the settings screen
+    settings_subsonic: SubsonicConfig,
+    subsonic_status: Option<SubsonicStatus>,
+    /// Result of an in-flight connection test, checked each loop iteration
+    subsonic_test: Option<oneshot::Receiver<Result<String, String>>>,
 }
 
 impl MenuApp {
@@ -173,7 +222,7 @@ impl MenuApp {
             state: initial_state,
             options: vec![
                 ("Start Radio", "Browse and stream internet radio stations"),
-                ("Settings", "Configure country and preferences"),
+                ("Settings", "Configure country, Subsonic, and preferences"),
                 ("About", "Version info and credits"),
                 ("Quit", "Exit AetherTune"),
             ],
@@ -182,6 +231,66 @@ impl MenuApp {
             timing: Timing::new(speed),
             settings_country: config.country_code,
             settings_default_panel: crate::core::types::ActivePanel::from_config_str(&config.default_panel),
+            settings_field: SettingsField::Country,
+            settings_subsonic: config.subsonic,
+            subsonic_status: None,
+            subsonic_test: None,
+        }
+    }
+
+    fn save_settings(&mut self) {
+        let mut config = crate::storage::config::Config::load();
+        config.country_code = self.settings_country.clone().to_uppercase();
+        config.default_panel = self.settings_default_panel.as_str().to_string();
+        config.subsonic = SubsonicConfig {
+            server_url: self.settings_subsonic.server_url.trim().to_string(),
+            username: self.settings_subsonic.username.trim().to_string(),
+            password: self.settings_subsonic.password.clone(),
+        };
+        config.save();
+        self.settings_country = config.country_code.clone();
+        self.settings_subsonic = config.subsonic;
+    }
+
+    /// The text buffer behind the focused Subsonic field, if any.
+    fn subsonic_field_mut(&mut self) -> Option<&mut String> {
+        match self.settings_field {
+            SettingsField::SubsonicUrl => Some(&mut self.settings_subsonic.server_url),
+            SettingsField::SubsonicUser => Some(&mut self.settings_subsonic.username),
+            SettingsField::SubsonicPassword => Some(&mut self.settings_subsonic.password),
+            _ => None,
+        }
+    }
+
+    /// Pings the server with the values currently typed in (saved or not)
+    /// on a background task; poll_subsonic_test() picks up the result.
+    fn start_subsonic_test(&mut self) {
+        let config = self.settings_subsonic.clone();
+        if !config.is_complete() {
+            self.subsonic_status = Some(SubsonicStatus::Failed("Enter a server URL and username first".to_string()));
+            return;
+        }
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = crate::subsonic::test_connection(&config)
+                .await
+                .map(|info| crate::subsonic::describe_server(&info))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.subsonic_test = Some(rx);
+        self.subsonic_status = Some(SubsonicStatus::Testing);
+    }
+
+    fn poll_subsonic_test(&mut self) {
+        let Some(mut rx) = self.subsonic_test.take() else { return };
+        match rx.try_recv() {
+            Ok(Ok(server)) => self.subsonic_status = Some(SubsonicStatus::Connected(server)),
+            Ok(Err(message)) => self.subsonic_status = Some(SubsonicStatus::Failed(message)),
+            Err(oneshot::error::TryRecvError::Empty) => self.subsonic_test = Some(rx),
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.subsonic_status = Some(SubsonicStatus::Failed("Connection test aborted".to_string()));
+            }
         }
     }
 
@@ -251,24 +360,45 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                         _ => {}
                     },
                     MenuState::Settings => match key.code {
+                        KeyCode::Enter if menu.settings_field == SettingsField::SubsonicTest => {
+                            menu.start_subsonic_test();
+                        }
                         KeyCode::Esc | KeyCode::Enter => {
                             // Save and return to main menu
-                            let mut config = crate::storage::config::Config::load();
-                            config.country_code = menu.settings_country.clone().to_uppercase();
-                            config.default_panel = menu.settings_default_panel.as_str().to_string();
-                            config.save();
-                            menu.settings_country = config.country_code.clone();
+                            menu.save_settings();
                             menu.state = MenuState::Main;
                         }
-                        KeyCode::Char(c) if menu.settings_country.len() < 2 => {
-                            if c.is_ascii_alphabetic() {
+                        KeyCode::Up | KeyCode::BackTab => {
+                            menu.settings_field = menu.settings_field.step(false);
+                        }
+                        KeyCode::Down | KeyCode::Tab => {
+                            menu.settings_field = menu.settings_field.step(true);
+                        }
+                        KeyCode::Char(c) if menu.settings_field == SettingsField::Country => {
+                            if c.is_ascii_alphabetic() && menu.settings_country.len() < 2 {
                                 menu.settings_country.push(c.to_ascii_uppercase());
                             }
                         }
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if menu.settings_field == SettingsField::Country => {
                             menu.settings_country.pop();
                         }
-                        KeyCode::Left | KeyCode::Right => {
+                        KeyCode::Char(c) if !c.is_control() => {
+                            if let Some(field) = menu.subsonic_field_mut() {
+                                if field.chars().count() < SUBSONIC_FIELD_MAX {
+                                    field.push(c);
+                                }
+                                menu.subsonic_status = None;
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(field) = menu.subsonic_field_mut() {
+                                field.pop();
+                                menu.subsonic_status = None;
+                            }
+                        }
+                        KeyCode::Left | KeyCode::Right
+                            if menu.settings_field == SettingsField::DefaultPanel =>
+                        {
                             use crate::core::types::ActivePanel;
                             let all = ActivePanel::ALL;
                             let current = all.iter().position(|p| *p == menu.settings_default_panel).unwrap_or(0);
@@ -287,6 +417,8 @@ pub fn show(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, speed: BootSp
                 }
             }
         }
+
+        menu.poll_subsonic_test();
 
         // Auto-transition from CRT to logo boot
         if menu.state == MenuState::CrtBoot && menu.elapsed_ms() > menu.timing.crt_total {
@@ -930,12 +1062,21 @@ fn draw_connecting(f: &mut Frame, menu: &MenuApp) {
 // ── About screen ────────────────────────────────────────────────────
 
 fn draw_settings(f: &mut Frame, menu: &MenuApp) {
+    const CYAN: Color = Color::Rgb(0, 255, 255);
+    const GREEN: Color = Color::Rgb(57, 255, 20);
+    const RED: Color = Color::Rgb(255, 80, 80);
+    const HINT: Color = Color::Rgb(80, 80, 110);
+    const FAINT: Color = Color::Rgb(60, 60, 80);
+    const LABEL: Color = Color::Rgb(150, 150, 180);
+    /// Width of the label column, so values line up.
+    const LABEL_WIDTH: usize = 15;
+
     let area = f.size();
     let bg = Block::default().style(Style::default().bg(Color::Rgb(12, 12, 20)));
     f.render_widget(bg, area);
 
-    let box_width = 56u16;
-    let box_height = 24u16;
+    let box_width = 64u16;
+    let box_height = 21u16;
     let box_x = area.width.saturating_sub(box_width) / 2;
     let box_y = area.height.saturating_sub(box_height) / 2;
     let box_area = Rect::new(
@@ -951,119 +1092,168 @@ fn draw_settings(f: &mut Frame, menu: &MenuApp) {
         .title(Span::styled(
             " Settings ",
             Style::default()
-                .fg(Color::Rgb(0, 255, 255))
+                .fg(CYAN)
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Rgb(0, 255, 255)))
+        .border_style(Style::default().fg(CYAN))
         .padding(Padding::new(2, 2, 1, 1))
         .style(Style::default().bg(Color::Rgb(18, 18, 30)));
 
     let inner = block.inner(box_area);
     f.render_widget(block, box_area);
 
-    // Country code display with cursor
-    let country_display = if menu.settings_country.is_empty() {
-        "__ ".to_string()
-    } else if menu.settings_country.len() == 1 {
-        format!("{}_ ", menu.settings_country)
-    } else {
-        format!("{} ", menu.settings_country)
+    // Room left for a value after the "▸ " marker, label column, and cursor
+    let value_width = (inner.width as usize).saturating_sub(2 + LABEL_WIDTH + 1).max(4);
+
+    let section = |title: &'static str| {
+        Line::from(Span::styled(
+            title,
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let hint = |text: String| {
+        Line::from(Span::styled(
+            format!("    {}", text),
+            Style::default().fg(HINT),
+        ))
+    };
+    // "▸ Label          value│" — marker and cursor only on the focused row
+    let field_row = |field: SettingsField, label: &'static str, value: Vec<Span<'static>>, editable: bool| {
+        let focused = menu.settings_field == field;
+        let mut spans = vec![
+            Span::styled(if focused { "▸ " } else { "  " }, Style::default().fg(CYAN)),
+            Span::styled(
+                format!("{:<width$}", label, width = LABEL_WIDTH),
+                if focused {
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(LABEL)
+                },
+            ),
+        ];
+        spans.extend(value);
+        if focused && editable {
+            spans.push(Span::styled("│", Style::default().fg(CYAN)));
+        }
+        Line::from(spans)
+    };
+    let text_value = |text: String, placeholder: &'static str| -> Vec<Span<'static>> {
+        if text.is_empty() {
+            vec![Span::styled(placeholder, Style::default().fg(FAINT))]
+        } else {
+            vec![Span::styled(
+                truncate_start(&text, value_width),
+                Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+            )]
+        }
     };
 
+    let country_value = if menu.settings_country.is_empty() {
+        vec![Span::styled("__", Style::default().fg(FAINT))]
+    } else {
+        text_value(menu.settings_country.clone(), "")
+    };
+
+    let panel_value = vec![
+        Span::styled("◂ ", Style::default().fg(CYAN)),
+        Span::styled(
+            format!("{:^11}", menu.settings_default_panel.as_str()),
+            Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ▸", Style::default().fg(CYAN)),
+    ];
+
+    let subsonic = &menu.settings_subsonic;
+    let masked_password = "•".repeat(subsonic.password.chars().count());
+
+    let test_focused = menu.settings_field == SettingsField::SubsonicTest;
+    let test_button = vec![Span::styled(
+        "[ Test connection ]",
+        if test_focused {
+            Style::default().fg(Color::Rgb(18, 18, 30)).bg(CYAN).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(CYAN)
+        },
+    )];
+    let status_line = match &menu.subsonic_status {
+        None => hint("Checks the values above (saved or not)".to_string()),
+        Some(SubsonicStatus::Testing) => hint("Connecting…".to_string()),
+        Some(SubsonicStatus::Connected(server)) => Line::from(Span::styled(
+            truncate_end(&format!("    ✓ Connected — {}", server), inner.width as usize),
+            Style::default().fg(GREEN),
+        )),
+        Some(SubsonicStatus::Failed(message)) => Line::from(Span::styled(
+            truncate_end(&format!("    ✗ {}", message), inner.width as usize),
+            Style::default().fg(RED),
+        )),
+    };
+
+    let key = |k: &'static str| Span::styled(k, Style::default().fg(CYAN));
+    let desc = |d: &'static str| Span::styled(d, Style::default().fg(Color::Rgb(80, 80, 100)));
+
     let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                "Country Code",
-                Style::default()
-                    .fg(Color::Rgb(0, 255, 255))
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        section("Radio"),
+        field_row(SettingsField::Country, "Country Code", country_value, true),
+        hint("ISO code (e.g. US, DE, GB) — blends ~30% local".to_string()),
+        hint("stations into results; empty = global only".to_string()),
+        field_row(SettingsField::DefaultPanel, "Default Panel", panel_value, false),
+        hint("Which tab AetherTune opens to on launch".to_string()),
+        Line::from(""),
+        section("Subsonic"),
+        field_row(
+            SettingsField::SubsonicUrl,
+            "Server URL",
+            text_value(subsonic.server_url.clone(), "http://192.168.1.10:4533"),
+            true,
+        ),
+        field_row(
+            SettingsField::SubsonicUser,
+            "Username",
+            text_value(subsonic.username.clone(), "—"),
+            true,
+        ),
+        field_row(
+            SettingsField::SubsonicPassword,
+            "Password",
+            text_value(masked_password, "—"),
+            true,
+        ),
+        hint("Navidrome, Gonic, Airsonic, or any Subsonic server".to_string()),
+        Line::from(""),
+        field_row(SettingsField::SubsonicTest, "", test_button, false),
+        status_line,
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  ",
-                Style::default(),
-            ),
-            Span::styled(
-                country_display,
-                Style::default()
-                    .fg(Color::Rgb(57, 255, 20))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                if menu.settings_country.len() < 2 { "│" } else { "✓" },
-                Style::default().fg(if menu.settings_country.len() < 2 {
-                    Color::Rgb(0, 255, 255)
-                } else {
-                    Color::Rgb(57, 255, 20)
-                }),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "  ISO 3166-1 Alpha-2 code (e.g. US, DE, GB)",
-                Style::default().fg(Color::Rgb(80, 80, 110)),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                "  Blends ~30% local stations into results",
-                Style::default().fg(Color::Rgb(80, 80, 110)),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "  Leave empty for global-only results",
-                Style::default().fg(Color::Rgb(60, 60, 80)),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "Default Panel",
-                Style::default()
-                    .fg(Color::Rgb(0, 255, 255))
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  ◂ ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled(
-                format!("{:^11}", menu.settings_default_panel.as_str()),
-                Style::default()
-                    .fg(Color::Rgb(57, 255, 20))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ▸", Style::default().fg(Color::Rgb(0, 255, 255))),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "  Which tab AetherTune opens to on launch",
-                Style::default().fg(Color::Rgb(80, 80, 110)),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Enter ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled("save  ", Style::default().fg(Color::Rgb(80, 80, 100))),
-            Span::styled("  Esc ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled("save & back  ", Style::default().fg(Color::Rgb(80, 80, 100))),
-            Span::styled("  Bksp ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled("clear code  ", Style::default().fg(Color::Rgb(80, 80, 100))),
-            Span::styled("  ◂▸ ", Style::default().fg(Color::Rgb(0, 255, 255))),
-            Span::styled("panel", Style::default().fg(Color::Rgb(80, 80, 100))),
+            key("↑↓ "), desc("field  "),
+            key("◂▸ "), desc("panel  "),
+            key("Enter "), desc("save · test  "),
+            key("Esc "), desc("save & back"),
         ]),
     ];
 
     let settings = Paragraph::new(lines);
     f.render_widget(settings, inner);
+}
+
+/// Keeps the end of `text` (the part being typed) when it's too wide.
+fn truncate_start(text: &str, max: usize) -> String {
+    let len = text.chars().count();
+    if len <= max {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(len - max + 1).collect();
+    format!("…{}", tail)
+}
+
+/// Keeps the start of `text` when it's too wide (status messages).
+fn truncate_end(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", head)
 }
 
 fn draw_about(f: &mut Frame) {
