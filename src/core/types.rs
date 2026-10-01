@@ -34,6 +34,14 @@ impl ActivePanel {
     }
 }
 
+/// Which library the browser (left panel) shows. Playback is independent:
+/// music keeps playing when you switch to browsing radio, and vice versa.
+#[derive(PartialEq, Clone, Copy)]
+pub enum MediaSource {
+    Radio,
+    Subsonic,
+}
+
 #[derive(PartialEq, Clone)]
 pub enum Overlay {
     None,

@@ -4,6 +4,7 @@ use crate::audio::visualizer::Visualizer;
 use crate::storage::config::{Config, KeyBindings};
 use crate::storage::favorites::FavoritesStore;
 use crate::storage::history::HistoryStore;
+use crate::subsonic::session::SubsonicSession;
 
 use super::perf::PerfStats;
 use super::radio::{self, FetchResult};
@@ -83,6 +84,13 @@ pub struct App {
     /// Cached " │ vis: off (X)" suffix, empty when the visualizer is on.
     /// Rebuilt alongside header_hint for the same reason.
     pub header_vis_status: String,
+    /// Which library the left panel browses (toggled with toggle_source)
+    pub source: MediaSource,
+    /// Subsonic browser, client, and play queue — the music counterpart
+    /// of the radio fields above
+    pub subsonic: SubsonicSession,
+    /// Header hint shown while browsing Subsonic (cached like header_hint)
+    pub header_hint_subsonic: String,
 }
 
 impl App {
@@ -150,6 +158,9 @@ impl App {
             transparent_bg: config.transparent_bg,
             header_hint: String::new(),
             header_vis_status: String::new(),
+            source: MediaSource::Radio,
+            subsonic: SubsonicSession::new(&config.subsonic),
+            header_hint_subsonic: String::new(),
         };
         app.rebuild_header_hint();
         app
@@ -174,6 +185,19 @@ impl App {
         self.header_hint = format!(
             "  │  {} search  │  {} genre  │  {} theme  │  {} help  │  {} settings  │  {} vizualizer toggle",
             search_key, genre_key, theme_key, help_key, settings_key, vis_key
+        );
+
+        let kb = &self.keybindings;
+        self.header_hint_subsonic = format!(
+            "  │  {} search  │  {} pause  │  {}/{} track  │  {}/{} seek  │  {} radio  │  {} help",
+            search_key,
+            keycode_to_string(kb.pause.primary),
+            keycode_to_string(kb.prev_track.primary),
+            keycode_to_string(kb.next_track.primary),
+            keycode_to_string(kb.seek_back.primary),
+            keycode_to_string(kb.seek_forward.primary),
+            keycode_to_string(kb.toggle_source.primary),
+            help_key,
         );
 
         self.header_vis_status = if self.visualizer_enabled {
@@ -666,6 +690,52 @@ impl App {
         }
 
         false
+    }
+
+    // ── Subsonic ──────────────────────────────────────────────────────
+
+    /// Switches the browser between radio stations and the Subsonic library.
+    pub fn toggle_source(&mut self) {
+        self.source = match self.source {
+            MediaSource::Radio => {
+                self.subsonic.ensure_loaded();
+                MediaSource::Subsonic
+            }
+            MediaSource::Subsonic => MediaSource::Radio,
+        };
+    }
+
+    /// Enter in the Subsonic browser: open the selected artist/album/
+    /// playlist, or play from the selected song.
+    pub fn subsonic_activate(&mut self) {
+        if self.subsonic.open_selected() {
+            return;
+        }
+        if matches!(self.subsonic.selected_entry(), Some(crate::subsonic::session::Entry::Song(_))) {
+            self.error_message = None;
+            if self.subsonic.play_selected(&mut self.player, self.volume) {
+                // Radio's now-playing info no longer applies
+                self.now_playing = None;
+                self.last_media_title = None;
+            } else {
+                self.error_message = Some(Self::mpv_error_message());
+            }
+        }
+    }
+
+    /// Per-tick Subsonic work: apply finished fetches, log track changes,
+    /// and stop once the queue has played through. Call after player.poll().
+    pub fn poll_subsonic(&mut self) {
+        self.subsonic.poll();
+        let (logged, finished) = self.subsonic.tick(&self.player);
+        if let Some(entry) = logged {
+            self.song_log.insert(0, entry);
+            self.song_log.truncate(50);
+        }
+        if finished {
+            self.stop();
+            self.status_message = Some("Queue finished".to_string());
+        }
     }
 
     /// Format session duration as "Xh Ym" or "Ym Zs"

@@ -55,6 +55,14 @@ pub struct KeyBindings {
     pub perf_tick_faster: KeyBinding,
     pub settings: KeyBinding,
     pub quit: KeyBinding,
+    // Subsonic (music) actions
+    pub toggle_source: KeyBinding,
+    pub back: KeyBinding,
+    pub pause: KeyBinding,
+    pub next_track: KeyBinding,
+    pub prev_track: KeyBinding,
+    pub seek_forward: KeyBinding,
+    pub seek_back: KeyBinding,
 }
 
 impl KeyBindings {
@@ -83,6 +91,13 @@ impl KeyBindings {
             ("perf_tick_faster",  "Tick Rate Faster",   &self.perf_tick_faster),
             ("settings",         "Settings",            &self.settings),
             ("quit",             "Quit",                &self.quit),
+            ("toggle_source",    "Radio / Subsonic",    &self.toggle_source),
+            ("back",             "Back (Subsonic)",     &self.back),
+            ("pause",            "Pause / Resume",      &self.pause),
+            ("next_track",       "Next Track",          &self.next_track),
+            ("prev_track",       "Previous Track",      &self.prev_track),
+            ("seek_forward",     "Seek Forward",        &self.seek_forward),
+            ("seek_back",        "Seek Back",           &self.seek_back),
         ]
     }
 
@@ -111,6 +126,13 @@ impl KeyBindings {
             "perf_tick_faster"  => &mut self.perf_tick_faster,
             "settings"         => &mut self.settings,
             "quit"             => &mut self.quit,
+            "toggle_source"    => &mut self.toggle_source,
+            "back"             => &mut self.back,
+            "pause"            => &mut self.pause,
+            "next_track"       => &mut self.next_track,
+            "prev_track"       => &mut self.prev_track,
+            "seek_forward"     => &mut self.seek_forward,
+            "seek_back"        => &mut self.seek_back,
             _ => return,
         };
         binding.primary = primary;
@@ -148,6 +170,13 @@ impl Default for KeyBindings {
             perf_tick_faster:  KeyBinding::with_alt(KeyCode::Char('>'), KeyCode::Char('.')),
             settings:         KeyBinding::new(KeyCode::Char('S')),
             quit:             KeyBinding::new(KeyCode::Char('q')),
+            toggle_source:    KeyBinding::new(KeyCode::Char('m')),
+            back:             KeyBinding::with_alt(KeyCode::Backspace, KeyCode::Esc),
+            pause:            KeyBinding::new(KeyCode::Char(' ')),
+            next_track:       KeyBinding::new(KeyCode::Char('.')),
+            prev_track:       KeyBinding::new(KeyCode::Char(',')),
+            seek_forward:     KeyBinding::new(KeyCode::Right),
+            seek_back:        KeyBinding::new(KeyCode::Left),
         }
     }
 }

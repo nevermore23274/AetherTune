@@ -11,12 +11,14 @@ pub mod shutdown;
 pub mod song_log;
 pub mod station_list;
 pub mod stream_info;
+pub mod subsonic_list;
+pub mod subsonic_now_playing;
 pub mod themes;
 pub mod theme_picker;
 pub mod visualizer;
 
 use crate::core::app::App;
-use crate::core::types::Overlay;
+use crate::core::types::{MediaSource, Overlay};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
@@ -70,7 +72,10 @@ fn draw_body(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    station_list::draw(f, app, body_chunks[0]);
+    match app.source {
+        MediaSource::Radio => station_list::draw(f, app, body_chunks[0]),
+        MediaSource::Subsonic => subsonic_list::draw(f, app, body_chunks[0]),
+    }
 
     // Right side: now playing / (song log + vis column) / media browser
     let right_chunks = Layout::default()
@@ -78,7 +83,8 @@ fn draw_body(f: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(11),  // Now playing info + clock
             Constraint::Min(6),     // Song log + (visualizer / stream info)
-            Constraint::Length(8),  // Media browser stub
+            // Media browser: taller for Subsonic to fit the up-next list
+            Constraint::Length(if app.source == MediaSource::Subsonic { 10 } else { 8 }),
         ])
         .split(body_chunks[1]);
 

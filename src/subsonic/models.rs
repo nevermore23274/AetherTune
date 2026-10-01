@@ -70,6 +70,21 @@ pub struct Song {
     pub suffix: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Playlist {
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub song_count: Option<u32>,
+    /// Total length in seconds.
+    #[serde(default)]
+    pub duration: Option<u32>,
+    #[serde(default)]
+    pub owner: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SearchResults {
     pub artists: Vec<Artist>,
@@ -103,6 +118,25 @@ pub(crate) struct ArtistWithAlbums {
 pub(crate) struct AlbumWithSongs {
     #[serde(default)]
     pub song: Vec<Song>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PlaylistsPayload {
+    #[serde(default)]
+    pub playlist: Vec<Playlist>,
+}
+
+/// getPlaylist calls its songs "entry" rather than "song".
+#[derive(Deserialize)]
+pub(crate) struct PlaylistWithSongs {
+    #[serde(default)]
+    pub entry: Vec<Song>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AlbumList2 {
+    #[serde(default)]
+    pub album: Vec<Album>,
 }
 
 #[derive(Deserialize)]

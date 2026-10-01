@@ -1,5 +1,5 @@
 use crate::core::app::App;
-use crate::core::types::{ActivePanel, InputMode};
+use crate::core::types::{ActivePanel, InputMode, MediaSource};
 
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -27,7 +27,18 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(paragraph, area);
     } else {
         // Normal mode: LIVE indicator + genre + hints
-        let playing_indicator = if app.player.is_playing() {
+        let playing_indicator = if app.player.is_playlist() {
+            // Subsonic music (on-demand, so not "LIVE")
+            let (label, color) = if app.player.playback.paused {
+                (" ❚❚ PAUSED ", app.theme.text_warn)
+            } else {
+                (" ▶ PLAYING ", app.theme.positive)
+            };
+            Span::styled(
+                label,
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+            )
+        } else if app.player.is_playing() {
             Span::styled(
                 " ▶ LIVE ",
                 Style::default()
@@ -49,7 +60,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         // Genre only means something on the Stations panel — Favorites/History
         // aren't filtered by it, so showing it there just implies a filter
         // that isn't actually being applied.
-        let panel_label = if app.active_panel == ActivePanel::Stations {
+        let panel_label = if app.source == MediaSource::Subsonic {
+            format!("  Subsonic: {}", app.subsonic.tab.title())
+        } else if app.active_panel == ActivePanel::Stations {
             format!("  Genre: {}", cat)
         } else {
             format!("  Panel: {}", app.active_panel.as_str())
@@ -63,7 +76,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(app.theme.accent),
             ),
             Span::styled(
-                app.header_hint.as_str(),
+                match app.source {
+                    MediaSource::Radio => app.header_hint.as_str(),
+                    MediaSource::Subsonic => app.header_hint_subsonic.as_str(),
+                },
                 Style::default().fg(Color::Rgb(80, 80, 110)),
             ),
             Span::styled(

@@ -45,6 +45,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Subsonic music has its own view (track, artist, progress)
+    if let Some(lines) = super::subsonic_now_playing::lines(app, inner.width) {
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(np) = &app.now_playing {

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::core::app::App;
-use crate::core::types::{InputMode, Overlay};
+use crate::core::types::{InputMode, MediaSource, Overlay};
 use crate::storage::config::KeyBindings;
 
 /// Handle a keypress in normal mode. Returns true if the app should quit.
@@ -20,7 +20,10 @@ fn handle_editing(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
-            app.perform_search();
+            match app.source {
+                MediaSource::Radio => app.perform_search(),
+                MediaSource::Subsonic => app.subsonic.search(&app.search_query),
+            }
         }
         KeyCode::Esc => {
             app.input_mode = InputMode::Normal;
@@ -74,6 +77,22 @@ fn handle_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool 
 
     // ── Normal mode: use configured keybindings ──
     let kc = code;
+
+    // While the profiler is open its tick-rate keys win over the track keys
+    // that share their defaults (, and .)
+    let perf_key = app.show_perf
+        && (app.keybindings.perf_tick_slower.matches(kc) || app.keybindings.perf_tick_faster.matches(kc));
+
+    if app.keybindings.toggle_source.matches(kc) {
+        app.toggle_source();
+        return false;
+    }
+    if !perf_key && super::subsonic::handle_playback_key(app, kc) {
+        return false;
+    }
+    if app.source == MediaSource::Subsonic && super::subsonic::handle_browser_key(app, kc) {
+        return false;
+    }
 
     if app.keybindings.quit.matches(kc) {
         return true;
