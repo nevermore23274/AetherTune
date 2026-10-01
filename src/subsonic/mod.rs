@@ -6,15 +6,17 @@
 // the other — the only thing the two will share is mpv playback.
 //
 //   config.rs — server URL + credentials (persisted in config.json)
-//   client.rs — authenticated REST calls and stream URL generation
-//   models.rs — response types (artists, albums, songs)
-//
-// So far only the connection test is wired up (launcher Settings screen
-// and `--subsonic-test`); browsing and playback come in later phases.
+//   client.rs   — authenticated REST calls and stream URL generation
+//   models.rs   — response types (artists, albums, songs)
+//   playback.rs — song queue played through the shared mpv player
+//   session.rs  — browser state, background fetches, and the play queue
+//                 as held by App (the Subsonic counterpart of its radio fields)
 
 pub mod client;
 pub mod config;
 pub mod models;
+pub mod playback;
+pub mod session;
 
 use client::{SubsonicClient, SubsonicError};
 use config::SubsonicConfig;

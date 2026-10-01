@@ -19,7 +19,16 @@ use std::sync::Arc;
 #[cfg(any(unix, windows))]
 use std::sync::mpsc;
 
-use crate::audio::mpv_ipc::{self, StreamInfo};
+use crate::audio::mpv_ipc::{self, PlaybackState, StreamInfo};
+use serde_json::json;
+
+/// Properties observed only in playlist sessions (see play_playlist()).
+/// IDs 5-8 avoid the 1-4 used above and the substring matching in
+/// mpv_ipc::parse_stream_info(); parse_playback_state() matches by name.
+const OBSERVE_PLAYLIST: &str = "{ \"command\": [\"observe_property\", 5, \"playlist-pos\"] }\n\
+                                { \"command\": [\"observe_property\", 6, \"pause\"] }\n\
+                                { \"command\": [\"observe_property\", 7, \"idle-active\"] }\n\
+                                { \"command\": [\"observe_property\", 8, \"duration\"] }";
 
 pub struct Player {
     /// mpv process for actual audio playback
@@ -116,6 +125,15 @@ pub struct Player {
     pub stream_info: StreamInfo,
     /// Whether the visualizer is enabled (controls capture startup)
     pub visualizer_enabled: bool,
+    /// True when the current mpv session was started by play_playlist()
+    /// rather than play_url(). Gates all playlist-only behaviour so the
+    /// radio path is unaffected.
+    playlist_mode: bool,
+    /// Playlist commands waiting for the IPC connection (playlist mode
+    /// only). Radio commands are still dropped while disconnected, as before.
+    pending_commands: Vec<String>,
+    /// Queue position, track time, pause state (playlist mode only)
+    pub playback: PlaybackState,
 }
 
 impl Player {
@@ -182,6 +200,9 @@ impl Player {
             has_coreaudio_tap,
             stream_info: StreamInfo::new(),
             visualizer_enabled: true,
+            playlist_mode: false,
+            pending_commands: Vec::new(),
+            playback: PlaybackState::default(),
         }
     }
 
@@ -197,10 +218,21 @@ impl Player {
 
     pub fn play_url(&mut self, url: &str, volume: u32) -> bool {
         self.stop();
+        self.spawn_mpv(Some(url), volume)
+    }
 
+    /// Spawns mpv (with `url`, or idle with no file for playlist sessions),
+    /// then starts the IPC connect and audio capture. Shared by play_url()
+    /// and play_playlist(); callers stop() first.
+    fn spawn_mpv(&mut self, url: Option<&str>, volume: u32) -> bool {
         let mut cmd = std::process::Command::new("mpv");
-        cmd.arg(url)
-            .arg("--no-video")
+        match url {
+            Some(url) => cmd.arg(url),
+            // Stay running with an empty playlist until IPC loads one,
+            // and after the playlist ends (PlaybackState::finished()).
+            None => cmd.arg("--idle=yes"),
+        };
+        cmd.arg("--no-video")
             .arg(format!("--volume={}", volume))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -545,6 +577,31 @@ impl Player {
         }
     }
 
+    /// Runs once per mpv session when the IPC connection comes up.
+    fn on_ipc_connected(&mut self) {
+        self.send_command(
+            "{ \"command\": [\"observe_property\", 1, \"media-title\"] }\n\
+             { \"command\": [\"observe_property\", 2, \"audio-codec-name\"] }\n\
+             { \"command\": [\"observe_property\", 3, \"audio-params/samplerate\"] }\n\
+             { \"command\": [\"observe_property\", 4, \"audio-params/channel-count\"] }",
+        );
+        if self.playlist_mode {
+            self.send_command(OBSERVE_PLAYLIST);
+            for command in std::mem::take(&mut self.pending_commands) {
+                self.send_command(&command);
+            }
+        }
+    }
+
+    fn ipc_connected(&self) -> bool {
+        #[cfg(unix)]
+        return self.stream.is_some();
+        #[cfg(windows)]
+        return self.pipe.is_some();
+        #[cfg(not(any(unix, windows)))]
+        return false;
+    }
+
     pub fn set_volume(&mut self, volume: u32) {
         let cmd = format!(
             "{{ \"command\": [\"set_property\", \"volume\", {}] }}",
@@ -572,12 +629,7 @@ impl Player {
                             if generation == self.ipc_generation {
                                 self.stream = Some(stream);
                                 self.reader = Some(reader);
-                                self.send_command(
-                                    "{ \"command\": [\"observe_property\", 1, \"media-title\"] }\n\
-                                     { \"command\": [\"observe_property\", 2, \"audio-codec-name\"] }\n\
-                                     { \"command\": [\"observe_property\", 3, \"audio-params/samplerate\"] }\n\
-                                     { \"command\": [\"observe_property\", 4, \"audio-params/channel-count\"] }",
-                                );
+                                self.on_ipc_connected();
                             }
                         }
                         Err(mpsc::TryRecvError::Empty) => {
@@ -600,12 +652,7 @@ impl Player {
                                 self.pipe = Some(file);
                                 self.pipe_reader_handle = Some(reader_handle);
                                 self.pipe_rx = Some(line_rx);
-                                self.send_command(
-                                    "{ \"command\": [\"observe_property\", 1, \"media-title\"] }\n\
-                                     { \"command\": [\"observe_property\", 2, \"audio-codec-name\"] }\n\
-                                     { \"command\": [\"observe_property\", 3, \"audio-params/samplerate\"] }\n\
-                                     { \"command\": [\"observe_property\", 4, \"audio-params/channel-count\"] }",
-                                );
+                                self.on_ipc_connected();
                             }
                         }
                         Err(mpsc::TryRecvError::Empty) => {
@@ -636,6 +683,14 @@ impl Player {
                 self.send_command(
                     r#"{ "command": ["get_property", "demuxer-cache-duration"], "request_id": 201 }"#,
                 );
+                // Polled rather than observed: time-pos changes every frame
+                if self.playlist_mode {
+                    let request = json!({
+                        "command": ["get_property", "time-pos"],
+                        "request_id": mpv_ipc::TIME_POS_REQUEST_ID,
+                    });
+                    self.send_command(&request.to_string());
+                }
             }
 
             #[cfg(unix)]
@@ -723,6 +778,9 @@ impl Player {
                 }
 
                 mpv_ipc::parse_stream_info(&mut self.stream_info, text);
+                if self.playlist_mode {
+                    mpv_ipc::parse_playback_state(&mut self.playback, text);
+                }
             }
 
             if stream_closed {
@@ -807,10 +865,90 @@ impl Player {
         self.audio_level = 0.0;
         self.media_title = None;
         self.stream_info.reset();
+        self.playlist_mode = false;
+        self.pending_commands.clear();
+        self.playback = PlaybackState::default();
     }
 
     pub fn is_playing(&self) -> bool {
         self.process.is_some()
+    }
+}
+
+// ── Playlist sessions ─────────────────────────────────────────────────
+// Used for on-demand music (Subsonic), where mpv plays a queue of tracks
+// and advances through it itself. None of this runs for radio streams.
+impl Player {
+    /// Starts mpv idle and loads `urls` as its playlist, beginning at
+    /// `start`. The URLs go over IPC rather than mpv's command line so
+    /// they — and any auth tokens in them — don't appear in `ps` output.
+    pub fn play_playlist(&mut self, urls: &[String], start: usize, volume: u32) -> bool {
+        self.stop();
+        if start >= urls.len() {
+            return false;
+        }
+
+        self.playlist_mode = true;
+        for url in urls {
+            self.pending_commands.push(mpv_ipc::command(&[json!("loadfile"), json!(url), json!("append")]));
+        }
+        self.pending_commands.push(mpv_ipc::command(&[json!("playlist-play-index"), json!(start)]));
+
+        if self.spawn_mpv(None, volume) {
+            true
+        } else {
+            self.playlist_mode = false;
+            self.pending_commands.clear();
+            false
+        }
+    }
+
+    pub fn is_playlist(&self) -> bool {
+        self.playlist_mode
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.playlist_command(&[json!("cycle"), json!("pause")]);
+    }
+
+    pub fn playlist_next(&mut self) {
+        self.playlist_command(&[json!("playlist-next")]);
+    }
+
+    pub fn playlist_prev(&mut self) {
+        self.playlist_command(&[json!("playlist-prev")]);
+    }
+
+    pub fn play_index(&mut self, index: usize) {
+        self.playlist_command(&[json!("playlist-play-index"), json!(index)]);
+    }
+
+    /// Seek by `seconds` (negative = back) within the current track.
+    pub fn seek_relative(&mut self, seconds: f64) {
+        self.playlist_command(&[json!("seek"), json!(seconds), json!("relative")]);
+    }
+
+    pub fn seek_to(&mut self, seconds: f64) {
+        self.playlist_command(&[json!("seek"), json!(seconds), json!("absolute")]);
+    }
+
+    /// Adds a track to the end of the playlist without interrupting playback.
+    pub fn append(&mut self, url: &str) {
+        self.playlist_command(&[json!("loadfile"), json!(url), json!("append")]);
+    }
+
+    /// Sends now if connected, otherwise queues for on_ipc_connected().
+    /// No-op outside playlist sessions.
+    fn playlist_command(&mut self, args: &[serde_json::Value]) {
+        if !self.playlist_mode {
+            return;
+        }
+        let command = mpv_ipc::command(args);
+        if self.ipc_connected() {
+            self.send_command(&command);
+        } else {
+            self.pending_commands.push(command);
+        }
     }
 }
 

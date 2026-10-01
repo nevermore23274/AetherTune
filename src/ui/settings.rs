@@ -14,11 +14,11 @@ const AWAITING_BG: Color = Color::Rgb(60, 30, 20);
 
 // Column widths (character counts, must be consistent between header and rows)
 const COL_ACTION: usize = 24; // includes 2-char indicator prefix
-const COL_PRIMARY: usize = 8;
+const COL_PRIMARY: usize = 11; // fits "Backspace" plus a gap
 // Alt column gets the remainder — no pad needed, it's the last column
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let popup_w: u16 = 48;
+    let popup_w: u16 = 52;
     let popup_h: u16 = 36;
     let x = area.x + area.width.saturating_sub(popup_w) / 2;
     let y = area.y + area.height.saturating_sub(popup_h) / 2;
@@ -27,6 +27,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     let actions = app.keybindings.all_actions();
     let mut lines = Vec::new();
+
+    // Scroll the action rows so the selection stays visible. Everything
+    // but the rows: borders + padding (4), header (4), footer (4).
+    let visible = (popup.height as usize).saturating_sub(12).max(1);
+    let first = app.settings_selected.saturating_sub(visible - 1).min(actions.len().saturating_sub(visible));
+    let last = (first + visible).min(actions.len());
 
     lines.push(Line::from(Span::styled(
         "⚙  Keybinding Settings",
@@ -55,7 +61,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Rgb(50, 50, 70)),
     )));
 
-    for (i, (_key, label, binding)) in actions.iter().enumerate() {
+    for (i, (_key, label, binding)) in actions.iter().enumerate().take(last).skip(first) {
         let is_selected = i == app.settings_selected;
         let is_awaiting = app.settings_awaiting_key.map_or(false, |(idx, _)| idx == i);
         let awaiting_slot = app.settings_awaiting_key
@@ -119,7 +125,16 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    lines.push(Line::from(""));
+    let hidden_above = first;
+    let hidden_below = actions.len() - last;
+    lines.push(if hidden_above + hidden_below > 0 {
+        Line::from(Span::styled(
+            format!("  {} of {} actions  ▴{} ▾{}", last - first, actions.len(), hidden_above, hidden_below),
+            Style::default().fg(Color::Rgb(80, 80, 110)),
+        ))
+    } else {
+        Line::from("")
+    });
     lines.push(Line::from(Span::styled(
         format!("{:─<width$}", "", width = COL_ACTION + COL_PRIMARY + 5),
         Style::default().fg(Color::Rgb(50, 50, 70)),

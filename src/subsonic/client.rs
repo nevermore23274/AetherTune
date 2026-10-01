@@ -134,6 +134,36 @@ impl SubsonicClient {
         Ok(payload.song)
     }
 
+    /// `count` random albums from the library (getAlbumList2, type=random).
+    pub async fn get_random_albums(&self, count: u32) -> Result<Vec<Album>> {
+        self.get_album_list("random", count, 0).await
+    }
+
+    /// A page of the album list (getAlbumList2). `kind` is the Subsonic list
+    /// type, e.g. "alphabeticalByName", "newest", "random".
+    pub async fn get_album_list(&self, kind: &str, size: u32, offset: u32) -> Result<Vec<Album>> {
+        let size = size.to_string();
+        let offset = offset.to_string();
+        let payload: AlbumList2 = self
+            .call_payload(
+                "getAlbumList2",
+                &[("type", kind), ("size", &size), ("offset", &offset)],
+                "albumList2",
+            )
+            .await?;
+        Ok(payload.album)
+    }
+
+    pub async fn get_playlists(&self) -> Result<Vec<Playlist>> {
+        let payload: PlaylistsPayload = self.call_payload("getPlaylists", &[], "playlists").await?;
+        Ok(payload.playlist)
+    }
+
+    pub async fn get_playlist_songs(&self, playlist_id: &str) -> Result<Vec<Song>> {
+        let payload: PlaylistWithSongs = self.call_payload("getPlaylist", &[("id", playlist_id)], "playlist").await?;
+        Ok(payload.entry)
+    }
+
     pub async fn search(&self, query: &str) -> Result<SearchResults> {
         let payload: SearchResult3 = self
             .call_payload(
@@ -350,6 +380,25 @@ mod tests {
         assert_eq!(album.song[0].bit_rate, Some(900));
         assert_eq!(album.song[0].album_id.as_deref(), Some("al1"));
         assert_eq!(album.song[1].duration, None);
+    }
+
+    #[test]
+    fn parses_playlists_and_playlist_entries() {
+        let mut response = unwrap_envelope(json!({ "subsonic-response": {
+            "status": "ok", "version": "1.16.1",
+            "playlists": { "playlist": [{ "id": "p1", "name": "Road trip", "songCount": 2, "owner": "me" }] }
+        }}))
+        .unwrap();
+        let lists: PlaylistsPayload = extract_payload(&mut response, "playlists").unwrap();
+        assert_eq!(lists.playlist[0].song_count, Some(2));
+
+        let mut response = unwrap_envelope(json!({ "subsonic-response": {
+            "status": "ok", "version": "1.16.1",
+            "playlist": { "id": "p1", "name": "Road trip", "entry": [{ "id": "s1", "title": "Airbag" }] }
+        }}))
+        .unwrap();
+        let list: PlaylistWithSongs = extract_payload(&mut response, "playlist").unwrap();
+        assert_eq!(list.entry[0].title, "Airbag");
     }
 
     #[test]

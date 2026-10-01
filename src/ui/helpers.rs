@@ -59,7 +59,7 @@ pub fn volume_line(volume: u32, theme: &Theme) -> Line<'static> {
 pub fn help_line_themed(key: &str, desc: &str, theme: &Theme) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            format!("  {:<14}", key),
+            format!("  {:<15} ", key),
             Style::default().fg(theme.positive).add_modifier(Modifier::BOLD),
         ),
         Span::styled(desc.to_string(), Style::default().fg(theme.text_muted)),
@@ -93,5 +93,15 @@ pub fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max_len - 1).collect();
         format!("{}…", truncated)
+    }
+}
+/// Seconds as "m:ss", or "h:mm:ss" from an hour up.
+pub fn format_duration(seconds: f64) -> String {
+    let total = seconds.max(0.0) as u64;
+    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
     }
 }

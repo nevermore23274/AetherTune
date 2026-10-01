@@ -2,9 +2,6 @@ pub mod audio;
 pub mod core;
 pub mod input;
 pub mod storage;
-// Only the connection test (Settings screen, --subsonic-test) uses this so
-// far; the browsing/playback API is wired into the UI in a later phase.
-#[allow(dead_code)]
 pub mod subsonic;
 pub mod ui;
 
@@ -136,7 +133,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             had_tick = true;
             let poll_start = Instant::now();
             app.player.poll();
-            app.check_song_change();
+            // Subsonic logs tracks from its own metadata (poll_subsonic);
+            // the radio logger would double-log mpv's tag titles.
+            if !app.player.is_playlist() {
+                app.check_song_change();
+            }
+            app.poll_subsonic();
 
             // Check if a background station fetch has completed
             app.poll_fetch();

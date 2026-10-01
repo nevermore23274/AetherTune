@@ -231,6 +231,27 @@ Below is a list of default keyboard shortcuts. All keybindings can be remapped f
 | `<` / `>`              | Adjust tick rate (when profiler is open)      |
 | `{` / `}`              | Adjust visualizer smoothing (when profiler is open) |
 | `q`                    | Quit                                         |
+| `m`                    | Switch between Radio and Subsonic            |
+
+While browsing **Subsonic** (`m`), the list keys work on your library instead:
+
+| Key                    | Action                                              |
+| ---------------------- | --------------------------------------------------- |
+| `Enter`                | Open artist / album / playlist, or play from a song |
+| `Backspace` / `Esc`    | Back                                                |
+| `Tab`                  | Cycle Artists / Albums / Playlists                  |
+| `/`                    | Search your library                                 |
+| `n`                    | Load more albums                                    |
+
+Music playback keys work from either view while Subsonic music is playing:
+
+| Key                    | Action                                       |
+| ---------------------- | -------------------------------------------- |
+| `Space`                | Pause / resume                               |
+| `,` / `.`              | Previous / next track (previous restarts the track if you're more than 3s in) |
+| `←` / `→`              | Seek back / forward 10s                      |
+
+`,` and `.` are also the alternate tick-rate keys; while the profiler is open, the profiler wins.
 
 ## Settings
 
@@ -252,9 +273,9 @@ To configure: launch AetherTune → select **Settings** from the menu → move t
 
 The Stations tab is still preloaded with a Lo-fi station list in the background regardless of your default panel, so it's ready the moment you switch to it.
 
-### Subsonic Server (in progress)
+### Subsonic Server
 
-Subsonic support — playing music from your own server (Navidrome, Gonic, Airsonic, or anything else speaking the Subsonic API) — is being built in phases. Right now you can save your server and check that AetherTune can reach it; browsing and playback are coming.
+Play music from your own server — Navidrome, Gonic, Airsonic, or anything else speaking the Subsonic API. Once your server is configured, press `m` in the player to switch the left panel from radio stations to your library: browse Artists, Albums, and Playlists (`Tab`), or search with `/`. Pressing `Enter` on a song plays it and queues the rest of that list after it; the **Media Browser** panel (bottom right) shows what's up next, and **Now Playing** shows the track, artist, album, and progress. Music keeps playing if you switch back to browsing radio; starting a radio station replaces it.
 
 To configure: launch AetherTune → select **Settings** → use **↑/↓** to reach **Server URL**, **Username**, and **Password** and type each value (e.g. `http://192.168.1.10:4533`) → select **Test connection** and press **Enter** to check it → press **Esc** to save.
 
@@ -327,9 +348,10 @@ src/
 │   ├── radio.rs              RadioBrowser API: fetch, search, pagination, spam filtering
 │   └── perf.rs               PerfStats, FrameTiming, PerfSummary
 ├── input/
-│   └── handler.rs            Keybinding dispatch (normal, editing, overlays)
+│   ├── handler.rs            Keybinding dispatch (normal, editing, overlays)
+│   └── subsonic.rs           Subsonic browser and music playback keys
 ├── audio/
-│   ├── player.rs             mpv playback, IPC, platform-specific capture orchestration
+│   ├── player.rs             mpv playback (radio streams + playlist sessions), IPC, platform-specific capture orchestration
 │   ├── pipe.rs               FIFO creation, PCM reader thread (Unix)
 │   ├── fft.rs                In-place radix-2 FFT, band grouping, perceptual weighting
 │   ├── seqlock.rs            Generic lock-free SeqLock<T: Copy>
@@ -341,10 +363,12 @@ src/
 │   ├── favorites.rs          JSON persistence for favorites
 │   ├── history.rs            JSON persistence for play history
 │   └── paths.rs              Resolves the storage directory (--config-dir / AETHERTUNE_CONFIG_DIR / default)
-├── subsonic/                 Subsonic music server client (in progress; kept separate from radio code)
+├── subsonic/                 Subsonic music server support (kept separate from radio code)
 │   ├── config.rs             Server URL + credentials (stored in config.json's "subsonic" object)
 │   ├── client.rs             Token auth, ping/browse/search endpoints, stream URL generation
-│   └── models.rs             Artist/Album/Song response types
+│   ├── models.rs             Artist/Album/Song response types
+│   ├── playback.rs           Song queue played as an mpv playlist (next/prev/seek rules)
+│   └── session.rs            Browser state (tabs, levels, background fetches) and play queue
 └── ui/
     ├── mod.rs                Layout orchestration
     ├── helpers.rs            Color palette, shared widgets
@@ -355,7 +379,9 @@ src/
     ├── song_log.rs           Rolling ICY metadata log
     ├── visualizer.rs         Spectrum bar rendering (proportional sizing for any resolution)
     ├── stream_info.rs        Live stream health panel
-    ├── media_browser.rs      Media source switcher (Radio/Subsonic stub)
+    ├── media_browser.rs      Radio/Subsonic source switcher + Subsonic up-next queue
+    ├── subsonic_list.rs      Left panel while browsing Subsonic
+    ├── subsonic_now_playing.rs  Now Playing view for Subsonic tracks (progress, track N of M)
     ├── overlays.rs           Help + station detail popups
     ├── genre_picker.rs       Genre selection overlay
     ├── theme_picker.rs       Theme selection overlay

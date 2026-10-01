@@ -1,52 +1,13 @@
 // ── Media Browser Panel ───────────────────────────────────────────────
 //
-// CURRENT STATE: Stub UI only. Shows Radio/Subsonic tabs but no interaction.
-//
-// FUTURE PLANS — Subsonic Integration:
-//
-//   This panel will become a unified media browser that lets the user
-//   search and play from both internet radio (radiobrowser API, already
-//   working) and a personal Subsonic music server.
-//
-//   Backend: Targets Subsonic (original) servers. We'll need a new
-//   `subsonic` module under `src/audio/` or a dedicated `src/subsonic/` 
-//   that implements:
-//     - Authentication (user/pass/token via Subsonic REST API)
-//     - Library browsing (artists, albums, playlists, random)
-//     - Search (search3 endpoint)
-//     - Stream URL generation (stream.view endpoint → feed to mpv)
-//     - Config persistence (~/.aethertune/subsonic.json: server URL, creds)
-//
-//   UI considerations:
-//     - Tab switching: Need a new keybinding to toggle the active source
-//       in this panel (e.g. `S` for Subsonic, or left/right arrows when
-//       this panel is focused). Currently there's no way to focus this
-//       panel — Tab cycles Stations/Favorites/History in the left panel.
-//       Options: (a) add MediaBrowser as a new ActivePanel variant so Tab
-//       includes it, (b) dedicate a key like `m` to toggle the media
-//       browser source, (c) make the source tabs focusable with their own
-//       key when the panel is selected.
-//     - When Subsonic tab is active: show search bar + results list
-//       (albums, tracks). Selecting a track queues or plays it via mpv
-//       using the Subsonic stream URL. The Now Playing / Song Log /
-//       Stream Info panels should work unchanged since mpv handles both.
-//     - When Radio tab is active: could mirror the station search that
-//       currently lives in the header bar, or just show "use / to search".
-//     - The media browser might need to grow taller once it has real
-//       content — currently 8 rows, may need 12+ for search results.
-//
-//   Integration with existing player:
-//     - mpv already handles HTTP streams, so Subsonic stream URLs should
-//       just work via player.play_url(). The visualizer, stream info, and
-//       song log will all work automatically.
-//     - NowPlaying struct may need a `source: MediaSource` enum field
-//       (Radio / Subsonic) so the UI can show appropriate metadata.
-//     - Song log filtering (is_stream_noise) may need tweaks for Subsonic
-//       stream URL patterns.
-//
-// ──────────────────────────────────────────────────────────────────────
+// Bottom-right panel: shows which source the left panel is browsing
+// (Radio / Subsonic, toggled with the toggle_source key) and, for
+// Subsonic, the play queue — the current track and what's up next.
 
 use crate::core::app::App;
+use crate::core::types::MediaSource;
+use crate::storage::config::keycode_to_string;
+use super::helpers::truncate_str;
 
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -57,26 +18,6 @@ use ratatui::{
 };
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    // Source tabs
-    let radio_tab = Span::styled(
-        " ● Radio ",
-        Style::default()
-            .fg(app.theme.positive)
-            .add_modifier(Modifier::BOLD),
-    );
-    let subsonic_tab = Span::styled(
-        " ○ Subsonic ",
-        Style::default().fg(Color::Rgb(60, 60, 90)),
-    );
-
-    let title_line = Line::from(vec![
-        Span::styled(" ", Style::default()),
-        radio_tab,
-        Span::styled("│", Style::default().fg(Color::Rgb(60, 60, 100))),
-        subsonic_tab,
-        Span::styled(" ", Style::default()),
-    ]);
-
     let block = Block::default()
         .title(Span::styled(
             " Media Browser ",
@@ -97,19 +38,88 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let lines = vec![
-        title_line,
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Subsonic integration coming soon…",
-            Style::default().fg(Color::Rgb(60, 60, 80)),
-        )),
-        Line::from(Span::styled(
-            "  Use / to search radio stations",
-            Style::default().fg(Color::Rgb(50, 50, 70)),
-        )),
-    ];
+    let switch_key = keycode_to_string(app.keybindings.toggle_source.primary);
+    let mut lines = vec![source_tabs(app, &switch_key), Line::from("")];
+    let width = inner.width as usize;
 
-    let paragraph = Paragraph::new(lines);
-    f.render_widget(paragraph, inner);
+    match app.source {
+        MediaSource::Radio => {
+            lines.push(dim_line(&format!("  {} → browse your Subsonic library", switch_key)));
+            lines.push(dim_line("  Use / to search radio stations"));
+        }
+        MediaSource::Subsonic => {
+            let room = (inner.height as usize).saturating_sub(lines.len());
+            lines.extend(queue_lines(app, room, width));
+        }
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn source_tabs(app: &App, switch_key: &str) -> Line<'static> {
+    let tab = |label: &str, active: bool| {
+        if active {
+            Span::styled(
+                format!(" ● {} ", label),
+                Style::default().fg(app.theme.positive).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(format!(" ○ {} ", label), Style::default().fg(Color::Rgb(70, 70, 100)))
+        }
+    };
+    Line::from(vec![
+        Span::raw(" "),
+        tab("Radio", app.source == MediaSource::Radio),
+        Span::styled("│", Style::default().fg(Color::Rgb(60, 60, 100))),
+        tab("Subsonic", app.source == MediaSource::Subsonic),
+        Span::styled(format!("   ({} to switch)", switch_key), Style::default().fg(Color::Rgb(60, 60, 90))),
+    ])
+}
+
+/// Current track and as many upcoming ones as fit in `room` lines.
+fn queue_lines(app: &App, room: usize, width: usize) -> Vec<Line<'static>> {
+    let Some(queue) = app.subsonic.active_queue(&app.player) else {
+        return vec![
+            dim_line("  Queue empty"),
+            dim_line("  Pick a song and press Enter to play from it"),
+        ];
+    };
+    let Some(current) = queue.current_index(&app.player) else {
+        return vec![dim_line("  Starting…")];
+    };
+
+    let songs = queue.songs();
+    let budget = width.saturating_sub(6);
+    let mut lines = Vec::new();
+    for (i, song) in songs.iter().enumerate().skip(current).take(room) {
+        let label = match &song.artist {
+            Some(artist) => format!("{} — {}", song.title, artist),
+            None => song.title.clone(),
+        };
+        let is_current = i == current;
+        lines.push(Line::from(vec![
+            Span::styled(
+                if is_current { "  ▶ " } else { "    " },
+                Style::default().fg(app.theme.positive),
+            ),
+            Span::styled(
+                truncate_str(&label, budget),
+                if is_current {
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(app.theme.text_muted)
+                },
+            ),
+        ]));
+    }
+    let remaining = songs.len().saturating_sub(current + lines.len());
+    if remaining > 0 && lines.len() == room && room > 1 {
+        lines.pop();
+        lines.push(dim_line(&format!("    … {} more", remaining + 1)));
+    }
+    lines
+}
+
+fn dim_line(text: &str) -> Line<'static> {
+    Line::from(Span::styled(text.to_string(), Style::default().fg(Color::Rgb(70, 70, 100))))
 }

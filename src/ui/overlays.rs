@@ -1,5 +1,5 @@
 use crate::core::app::App;
-use crate::core::types::ActivePanel;
+use crate::core::types::{ActivePanel, MediaSource};
 use crate::storage::config::binding_display;
 use super::helpers::{help_line_themed, info_line, centered_rect};
 use ratatui::{
@@ -15,6 +15,9 @@ pub fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, popup);
 
     let kb = &app.keybindings;
+    if app.source == MediaSource::Subsonic {
+        return draw_subsonic_help(f, app, popup);
+    }
     let help_text = vec![
         Line::from(Span::styled(
             "⌨  Keybindings",
@@ -42,6 +45,7 @@ pub fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         help_line_themed(&binding_display(&kb.settings), "Keybinding settings", &app.theme),
         help_line_themed(&binding_display(&kb.theme_picker), "Theme picker", &app.theme),
         help_line_themed(&binding_display(&kb.visualizer_toggle), "Toggle visualizer", &app.theme),
+        help_line_themed(&binding_display(&kb.toggle_source), "Switch to Subsonic", &app.theme),
         help_line_themed(&binding_display(&kb.quit), "Quit", &app.theme),
         Line::from(""),
         Line::from(Span::styled(
@@ -63,6 +67,65 @@ pub fn draw_help(f: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(help_text).block(block);
     f.render_widget(paragraph, popup);
+}
+
+/// Help while browsing Subsonic: only the keys that do something there.
+fn draw_subsonic_help(f: &mut Frame, app: &App, popup: Rect) {
+    let kb = &app.keybindings;
+    let section = |title: &'static str| {
+        Line::from(Span::styled(
+            title,
+            Style::default().fg(app.theme.accent).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let help_text = vec![
+        section("⌨  Subsonic — browsing"),
+        help_line_themed(&binding_display(&kb.navigate_up), "Navigate up", &app.theme),
+        help_line_themed(&binding_display(&kb.navigate_down), "Navigate down", &app.theme),
+        help_line_themed(&binding_display(&kb.play), "Open / play from selected song", &app.theme),
+        help_line_themed(&binding_display(&kb.back), "Back", &app.theme),
+        help_line_themed(&binding_display(&kb.cycle_panel), "Artists / Albums / Playlists", &app.theme),
+        help_line_themed(&binding_display(&kb.search), "Search your library", &app.theme),
+        help_line_themed(&binding_display(&kb.load_more), "Load more albums", &app.theme),
+        Line::from(""),
+        section("Playback"),
+        help_line_themed(&binding_display(&kb.pause), "Pause / resume", &app.theme),
+        help_line_themed(&binding_display(&kb.next_track), "Next track", &app.theme),
+        help_line_themed(&binding_display(&kb.prev_track), "Previous track / restart", &app.theme),
+        help_line_themed(&binding_display(&kb.seek_forward), "Seek forward 10s", &app.theme),
+        help_line_themed(&binding_display(&kb.seek_back), "Seek back 10s", &app.theme),
+        help_line_themed(&binding_display(&kb.volume_up), "Volume up", &app.theme),
+        help_line_themed(&binding_display(&kb.volume_down), "Volume down", &app.theme),
+        help_line_themed(&binding_display(&kb.stop), "Stop", &app.theme),
+        Line::from(""),
+        help_line_themed(&binding_display(&kb.toggle_source), "Switch to Radio", &app.theme),
+        help_line_themed(&binding_display(&kb.theme_picker), "Theme picker", &app.theme),
+        help_line_themed(&binding_display(&kb.visualizer_toggle), "Toggle visualizer", &app.theme),
+        help_line_themed(&binding_display(&kb.settings), "Keybinding settings", &app.theme),
+        help_line_themed(&binding_display(&kb.quit), "Quit", &app.theme),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press ? or Esc to close",
+            Style::default().fg(Color::Rgb(80, 80, 110)),
+        )),
+    ];
+
+    let block = Block::default()
+        .title(Span::styled(
+            " Help ",
+            Style::default().fg(app.theme.text_warn).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(app.theme.text_warn))
+        .padding(Padding::new(2, 2, 1, 1))
+        .style(Style::default().bg(Color::Rgb(10, 10, 20)));
+
+    // Same width as the radio help, but tall enough for every line
+    let height = (help_text.len() as u16 + 4).min(f.size().height);
+    let popup = Rect::new(popup.x, f.size().height.saturating_sub(height) / 2, popup.width, height);
+    f.render_widget(Clear, popup);
+    f.render_widget(Paragraph::new(help_text).block(block), popup);
 }
 
 pub fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
