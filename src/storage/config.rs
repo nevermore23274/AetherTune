@@ -1,6 +1,8 @@
 use std::fs;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use crossterm::event::KeyCode;
+use crate::subsonic::config::SubsonicConfig;
 
 const DEFAULT_TICK_RATE_MS: u64 = 30;
 const DEFAULT_VOLUME: u32 = 50;
@@ -228,6 +230,9 @@ pub struct Config {
     /// When true, theme backgrounds are cleared to let the terminal's own
     /// background (and its transparency, if configured) show through.
     pub transparent_bg: bool,
+    /// Subsonic server connection (the "subsonic" object). Holds a
+    /// password, which is why save() restricts the file to its owner.
+    pub subsonic: SubsonicConfig,
     path: PathBuf,
 }
 
@@ -259,7 +264,8 @@ impl Config {
                     .unwrap_or_else(|| "Stations".to_string());
                 let transparent_bg = Self::extract_bool(&contents, "transparent_bg")
                     .unwrap_or(false);
-                return Self { tick_rate_ms, volume, country_code, keybindings, theme, visualizer_enabled, default_panel, transparent_bg, path };
+                let subsonic = Self::load_subsonic(&contents);
+                return Self { tick_rate_ms, volume, country_code, keybindings, theme, visualizer_enabled, default_panel, transparent_bg, subsonic, path };
             }
         }
         Self {
@@ -271,12 +277,13 @@ impl Config {
             visualizer_enabled: true,
             default_panel: "Stations".to_string(),
             transparent_bg: false,
+            subsonic: SubsonicConfig::default(),
             path,
         }
     }
 
     pub fn save(&self) {
-        let cc_escaped = self.country_code.replace('\\', "\\\\").replace('"', "\\\"");
+        let cc_escaped = escape_json(&self.country_code);
 
         // Build keybindings JSON
         let mut kb_lines = Vec::new();
@@ -318,14 +325,36 @@ impl Config {
             format!("{{\n{}\n    }}", kb_lines.join(",\n"))
         };
 
-        let theme_escaped = self.theme.replace('\\', "\\\\").replace('"', "\\\"");
-        let default_panel_escaped = self.default_panel.replace('\\', "\\\\").replace('"', "\\\"");
+        let theme_escaped = escape_json(&self.theme);
+        let default_panel_escaped = escape_json(&self.default_panel);
+
+        let subsonic_json = format!(
+            "{{\n    \"server_url\": \"{}\",\n    \"username\": \"{}\",\n    \"password\": \"{}\"\n  }}",
+            escape_json(&self.subsonic.server_url),
+            escape_json(&self.subsonic.username),
+            escape_json(&self.subsonic.password),
+        );
 
         let json = format!(
-            "{{\n  \"tick_rate_ms\": {},\n  \"volume\": {},\n  \"country_code\": \"{}\",\n  \"theme\": \"{}\",\n  \"visualizer_enabled\": {},\n  \"default_panel\": \"{}\",\n  \"transparent_bg\": {},\n    \"keybindings\": {}\n}}",
-            self.tick_rate_ms, self.volume, cc_escaped, theme_escaped, self.visualizer_enabled, default_panel_escaped, self.transparent_bg, kb_json
+            "{{\n  \"tick_rate_ms\": {},\n  \"volume\": {},\n  \"country_code\": \"{}\",\n  \"theme\": \"{}\",\n  \"visualizer_enabled\": {},\n  \"default_panel\": \"{}\",\n  \"transparent_bg\": {},\n  \"subsonic\": {},\n    \"keybindings\": {}\n}}",
+            self.tick_rate_ms, self.volume, cc_escaped, theme_escaped, self.visualizer_enabled, default_panel_escaped, self.transparent_bg, subsonic_json, kb_json
         );
-        let _ = fs::write(&self.path, json);
+        let _ = write_private(&self.path, &json);
+    }
+
+    /// Reads the "subsonic" object. Keys are looked up from the start of
+    /// that object so its generic names ("username", "password") can't
+    /// collide with anything earlier in the file.
+    fn load_subsonic(json: &str) -> SubsonicConfig {
+        let Some(start) = json.find("\"subsonic\"") else {
+            return SubsonicConfig::default();
+        };
+        let section = &json[start..];
+        SubsonicConfig {
+            server_url: Self::extract_string(section, "server_url").unwrap_or_default(),
+            username: Self::extract_string(section, "username").unwrap_or_default(),
+            password: Self::extract_string(section, "password").unwrap_or_default(),
+        }
     }
 
     /// Parse keybindings from the JSON contents, falling back to defaults
@@ -433,6 +462,8 @@ impl Config {
                             '"' => result.push('"'),
                             '\\' => result.push('\\'),
                             'n' => result.push('\n'),
+                            'r' => result.push('\r'),
+                            't' => result.push('\t'),
                             _ => result.push(escaped),
                         }
                     }
@@ -455,6 +486,35 @@ impl Config {
             None
         }
     }
+}
+
+/// Escapes a value for embedding in a JSON string literal.
+fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Writes the file readable by its owner only (Unix), since config.json
+/// can hold the Subsonic password. Also tightens files created before
+/// that was the case. On Windows the file inherits the user profile ACLs.
+fn write_private(path: &Path, contents: &str) -> io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents.as_bytes())
 }
 
 #[cfg(test)]
@@ -504,5 +564,42 @@ mod tests {
         assert_eq!(Config::extract_u64(json, "tick_rate_ms"), Some(30));
         assert_eq!(Config::extract_u64(json, "volume"), Some(50));
         assert_eq!(Config::extract_string(json, "country_code"), Some("DE".to_string()));
+    }
+
+    #[test]
+    fn test_subsonic_round_trips_special_characters() {
+        let password = r#"p@ss "quoted" \ {braces} , tab	end"#;
+        let json = format!(
+            r#"{{ "theme": "CRT", "subsonic": {{ "server_url": "{}", "username": "{}", "password": "{}" }}, "keybindings": {{}} }}"#,
+            escape_json("http://192.168.1.10:4533"),
+            escape_json("me"),
+            escape_json(password),
+        );
+        let subsonic = Config::load_subsonic(&json);
+        assert_eq!(subsonic.server_url, "http://192.168.1.10:4533");
+        assert_eq!(subsonic.username, "me");
+        assert_eq!(subsonic.password, password);
+    }
+
+    #[test]
+    fn test_subsonic_missing_section_is_empty() {
+        let json = r#"{ "tick_rate_ms": 30, "username": "not-subsonic" }"#;
+        let subsonic = Config::load_subsonic(json);
+        assert_eq!(subsonic, SubsonicConfig::default());
+        assert!(!subsonic.is_complete());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_private_restricts_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut path = std::env::temp_dir();
+        path.push(format!("aethertune-config-test-{}.json", std::process::id()));
+        fs::write(&path, "{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, "{ }").unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ }");
+        let _ = fs::remove_file(&path);
     }
 }

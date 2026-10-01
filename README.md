@@ -248,9 +248,17 @@ Leave the country code empty (backspace to clear) for pure global results — th
 
 Choose which panel AetherTune opens to on launch: **Stations**, **Favorites**, or **History**. Useful if you mostly return to a curated favorites list rather than browsing fresh stations each time.
 
-To configure: launch AetherTune → select **Settings** from the menu → use **◂/▸** on the "Default Panel" field to cycle through the options → press **Enter** to save.
+To configure: launch AetherTune → select **Settings** from the menu → move to the "Default Panel" field with **↑/↓** → use **◂/▸** to cycle through the options → press **Enter** to save.
 
 The Stations tab is still preloaded with a Lo-fi station list in the background regardless of your default panel, so it's ready the moment you switch to it.
+
+### Subsonic Server (in progress)
+
+Subsonic support — playing music from your own server (Navidrome, Gonic, Airsonic, or anything else speaking the Subsonic API) — is being built in phases. Right now you can save your server and check that AetherTune can reach it; browsing and playback are coming.
+
+To configure: launch AetherTune → select **Settings** → use **↑/↓** to reach **Server URL**, **Username**, and **Password** and type each value (e.g. `http://192.168.1.10:4533`) → select **Test connection** and press **Enter** to check it → press **Esc** to save.
+
+The details are stored in the `"subsonic"` section of your `config.json`, outside the AetherTune install, so they never end up in the repository. Your password is never sent to the server — AetherTune authenticates with a salted token generated per request. On Linux and macOS, `config.json` is restricted to your user (mode 600) since it holds the password. You can also check the saved server from a shell with `aethertune --subsonic-test`.
 
 ### Keybindings
 
@@ -329,10 +337,14 @@ src/
 │   ├── wasapi_capture.rs     WASAPI loopback audio capture (Windows)
 │   └── jobobject.rs          Win32 Job Object for mpv lifecycle (Windows)
 ├── storage/
-│   ├── config.rs             User preferences (tick rate, volume, country code, keybindings)
+│   ├── config.rs             User preferences (tick rate, volume, country code, keybindings, Subsonic server)
 │   ├── favorites.rs          JSON persistence for favorites
 │   ├── history.rs            JSON persistence for play history
 │   └── paths.rs              Resolves the storage directory (--config-dir / AETHERTUNE_CONFIG_DIR / default)
+├── subsonic/                 Subsonic music server client (in progress; kept separate from radio code)
+│   ├── config.rs             Server URL + credentials (stored in config.json's "subsonic" object)
+│   ├── client.rs             Token auth, ping/browse/search endpoints, stream URL generation
+│   └── models.rs             Artist/Album/Song response types
 └── ui/
     ├── mod.rs                Layout orchestration
     ├── helpers.rs            Color palette, shared widgets
@@ -373,7 +385,7 @@ The visualizer applies CAVA-inspired post-processing: gravity fall-off (accelera
 
 ### Data persistence
 
-Favorites, history, and user preferences (tick rate, volume, country code, default panel, theme, transparent background, keybindings) are stored as JSON in `~/.aethertune/` by default, or wherever `--config-dir`/`AETHERTUNE_CONFIG_DIR` points (see [Usage](#usage)). The serializer/parser is hand-rolled (no serde dependency) to keep the dependency tree minimal. Settings like tick rate and keybindings are saved automatically when adjusted and restored on next launch. The country code and default panel are configured via the Settings screen in the launch menu. Only non-default keybindings are persisted to keep the config file clean.
+Favorites, history, and user preferences (tick rate, volume, country code, default panel, theme, transparent background, keybindings, Subsonic server) are stored as JSON in `~/.aethertune/` by default, or wherever `--config-dir`/`AETHERTUNE_CONFIG_DIR` points (see [Usage](#usage)). The serializer/parser for these files is hand-rolled; serde is only used by the Subsonic client to parse server responses. Because `config.json` can hold your Subsonic password, it is written readable by your user only (mode 600) on Linux and macOS. Settings like tick rate and keybindings are saved automatically when adjusted and restored on next launch. The country code and default panel are configured via the Settings screen in the launch menu. Only non-default keybindings are persisted to keep the config file clean.
 
 ## Contributing
 
