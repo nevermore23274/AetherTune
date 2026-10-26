@@ -8,6 +8,7 @@ A terminal-based internet radio player with real-time audio visualization, built
 [![AUR](https://img.shields.io/aur/version/aethertune-bin)](https://aur.archlinux.org/packages/aethertune-bin)
 [![PPA](https://img.shields.io/badge/PPA-patchgoblin%2Faethertune-orange)](https://launchpad.net/~patchgoblin/+archive/ubuntu/aethertune)
 [![Homebrew](https://img.shields.io/badge/brew-nevermore23274%2Faethertune-yellow)](https://github.com/nevermore23274/homebrew-aethertune)
+[![AetherTune on The Terminal Index](https://cli.masoko.net/badge/aethertune.svg)](https://cli.masoko.net/tools/aethertune/)
 
 ## Overview
 
